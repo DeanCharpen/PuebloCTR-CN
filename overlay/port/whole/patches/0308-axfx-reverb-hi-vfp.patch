@@ -1,0 +1,179 @@
+# The 3DS port, stage 3.10: the AXFX ReverbHi of patch 0047 (on the game's core, 3 x 160 samples every
+# 5 ms) with the integer conversions as one VCVT each on ARM (no VFP compare and flag transfer per
+# check) and the delay lines in locals for a block. Same results. A port patch.
+--- a/src/lib/reverb_hi.c
++++ b/src/lib/reverb_hi.c
+@@ -188,6 +188,27 @@
+ 
+ /* port: patch 0047, C for the Gekko assembly of the SDK: the same steps in the
+  * same order, in single precision (fctiwz = truncation, fctiw = rounding). */
++#if defined(__arm__) && defined(__ARM_FP)
++/* port: patch 0158. VCVT gives the results of the checks below by itself: towards zero
++ * (VCVT) or to nearest, ties to even (VCVTR in the default rounding mode), saturated, a
++ * NaN 0; without a VFP compare and flag transfer each, which stall the VFP of the
++ * 3DS's ARM11 (the reverb runs 3 x 160 samples every 5 ms on the game's core). */
++static inline s32 AXFXPortTrunc(f32 v) {
++    f32 t;
++    s32 i;
++    __asm__("vcvt.s32.f32 %0, %1" : "=t"(t) : "t"(v));
++    __builtin_memcpy(&i, &t, 4);
++    return i;
++}
++
++static inline s32 AXFXPortRound(f32 v) {
++    f32 t;
++    s32 i;
++    __asm__("vcvtr.s32.f32 %0, %1" : "=t"(t) : "t"(v));
++    __builtin_memcpy(&i, &t, 4);
++    return i;
++}
++#else
+ static s32 AXFXPortTrunc(f32 v) {
+     if (v >= 2147483647.0f) {
+         return 0x7FFFFFFF;
+@@ -215,20 +236,44 @@
+     }
+     return (s32)r;
+ }
++#endif
+ 
+-static void AXFXPortWrite(AXFX_REVHI_DELAYLINE* dl, f32 v) {
+-    dl->inputs[dl->inPoint >> 2] = v;
+-    dl->inPoint += 4;
+-    if (dl->inPoint == dl->length) {
+-        dl->inPoint = 0;
++/* port: patch 0158. A delay line in locals for the 160 samples of HandleReverb (in
++ * samples; the line keeps bytes): stored through the line's f32 buffer, every field of
++ * rv was loaded and stored again for each sample otherwise. */
++typedef struct AXFXPortLine {
++    f32* buf;
++    s32 in;
++    s32 out;
++    s32 len;
++    f32 last;
++} AXFXPortLine;
++
++static inline void AXFXPortLoad(AXFXPortLine* l, const AXFX_REVHI_DELAYLINE* dl) {
++    l->buf = dl->inputs;
++    l->in = dl->inPoint >> 2;
++    l->out = dl->outPoint >> 2;
++    l->len = dl->length >> 2;
++    l->last = dl->lastOutput;
++}
++
++static inline void AXFXPortStore(const AXFXPortLine* l, AXFX_REVHI_DELAYLINE* dl) {
++    dl->inPoint = l->in << 2;
++    dl->outPoint = l->out << 2;
++    dl->lastOutput = l->last;
++}
++
++static inline void AXFXPortWrite(AXFXPortLine* l, f32 v) {
++    l->buf[l->in] = v;
++    if (++l->in == l->len) {
++        l->in = 0;
+     }
+ }
+ 
+-static f32 AXFXPortRead(AXFX_REVHI_DELAYLINE* dl) {
+-    f32 v = dl->inputs[dl->outPoint >> 2];
+-    dl->outPoint += 4;
+-    if (dl->outPoint == dl->length) {
+-        dl->outPoint = 0;
++static inline f32 AXFXPortRead(AXFXPortLine* l) {
++    f32 v = l->buf[l->out];
++    if (++l->out == l->len) {
++        l->out = 0;
+     }
+     return v;
+ }
+@@ -246,8 +291,8 @@
+ }
+ 
+ static void HandleReverb(s32* sptr, AXFX_REVHI_WORK* rv, s32 k) {
+-    AXFX_REVHI_DELAYLINE* c = &rv->C[k * 3];
+-    AXFX_REVHI_DELAYLINE* ap = &rv->AP[k * 3];
++    AXFXPortLine c[3];
++    AXFXPortLine ap[3];
+     f32 g = rv->allPassCoeff;
+     f32 damping = rv->damping;
+     f32 wet = rv->level * 0.6f;
+@@ -256,51 +301,60 @@
+     f32 cc1 = rv->combCoef[k * 3 + 1];
+     f32 cc2 = rv->combCoef[k * 3 + 2];
+     f32 lp = rv->lpLastout[k];
++    s32 preDelay = rv->preDelayTime;
++    f32* p = rv->preDelayPtr[k];
+     s32 i;
+ 
++    for (i = 0; i < 3; i++) {
++        AXFXPortLoad(&c[i], &rv->C[k * 3 + i]);
++        AXFXPortLoad(&ap[i], &rv->AP[k * 3 + i]);
++    }
+     for (i = 0; i < 160; i++) {
+         f32 x = (f32)sptr[i];
+         f32 d = x;
+         f32 w0, w1, sum, w, y;
+ 
+-        if (rv->preDelayTime != 0) {
++        if (preDelay != 0) {
+             /* The assembly stores the advanced pre-delay pointer into the line
+              * (at its byte 0x1B8) instead of rv->preDelayPtr[k], which so stays
+              * at the line's start: the pre-delay is one sample. Kept so it sounds
+              * the same; the stray store is left out. */
+-            f32* p = rv->preDelayPtr[k];
+             d = p[0];
+             p[0] = x;
+         }
+         /* three combs */
+-        w0 = cc0 * c[0].lastOutput + d;
+-        w1 = cc1 * c[1].lastOutput + d;
++        w0 = cc0 * c[0].last + d;
++        w1 = cc1 * c[1].last + d;
+         AXFXPortWrite(&c[0], w0);
+         AXFXPortWrite(&c[1], w1);
+-        c[0].lastOutput = AXFXPortRead(&c[0]);
+-        c[1].lastOutput = AXFXPortRead(&c[1]);
+-        sum = c[0].lastOutput + c[1].lastOutput;
+-        w = cc2 * c[2].lastOutput + d;
++        c[0].last = AXFXPortRead(&c[0]);
++        c[1].last = AXFXPortRead(&c[1]);
++        sum = c[0].last + c[1].last;
++        w = cc2 * c[2].last + d;
+         AXFXPortWrite(&c[2], w);
+-        c[2].lastOutput = AXFXPortRead(&c[2]);
+-        sum = sum + c[2].lastOutput;
++        c[2].last = AXFXPortRead(&c[2]);
++        sum = sum + c[2].last;
+         /* two all-passes */
+-        w = g * ap[0].lastOutput + sum;
++        w = g * ap[0].last + sum;
+         AXFXPortWrite(&ap[0], w);
+-        y = ap[0].lastOutput - g * w;
+-        ap[0].lastOutput = AXFXPortRead(&ap[0]);
+-        w = g * ap[1].lastOutput + y;
++        y = ap[0].last - g * w;
++        ap[0].last = AXFXPortRead(&ap[0]);
++        w = g * ap[1].last + y;
+         AXFXPortWrite(&ap[1], w);
+-        y = ap[1].lastOutput - g * w;
+-        ap[1].lastOutput = AXFXPortRead(&ap[1]);
++        y = ap[1].last - g * w;
++        ap[1].last = AXFXPortRead(&ap[1]);
+         /* the low-pass, then the third all-pass */
+         lp = damping * lp + y * 0.3f;
+-        w = g * ap[2].lastOutput + lp;
++        w = g * ap[2].last + lp;
+         AXFXPortWrite(&ap[2], w);
+-        y = ap[2].lastOutput - g * w;
+-        ap[2].lastOutput = AXFXPortRead(&ap[2]);
++        y = ap[2].last - g * w;
++        ap[2].last = AXFXPortRead(&ap[2]);
+         sptr[i] = AXFXPortTrunc(wet * y + dry * x);
+     }
++    for (i = 0; i < 3; i++) {
++        AXFXPortStore(&c[i], &rv->C[k * 3 + i]);
++        AXFXPortStore(&ap[i], &rv->AP[k * 3 + i]);
++    }
+     rv->lpLastout[k] = lp;
+ }
+ 

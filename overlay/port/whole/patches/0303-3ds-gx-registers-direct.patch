@@ -1,0 +1,85 @@
+# The 3DS port, stage 3.3c (docs 09-stage3-gx.md of the port research): the GX library's register
+# writes (BP, CP, single XF registers, the immediate matrix loads) go straight into the GX decoder's
+# state (runtime/gx_fifo.cpp re4_gx_put_bp, re4_gx_put_cp, re4_gx_put_xf) instead of as bytes the
+# decoder reads back; while a display list is recorded or a command is half written, the bytes as
+# before. On the 3DS only. A port patch.
+--- a/src/lib/__gx.h
++++ b/src/lib/__gx.h
+@@ -172,6 +172,28 @@
+     regAddr = addr; \
+ } while (0)
+ 
++// The 3DS port (stage 3.3c): register writes go straight into the GX decoder's state when the FIFO
++// feeds it and no command is half written (runtime/gx_fifo.cpp re4_gx_put_bp/cp/xf), not as bytes
++// it reads back: each FIFO write and each command read cost ~0.4 and ~1.4 us there (r100, ~70 of a
++// 145 ms frame, 01.11.2026). Otherwise (a display list being recorded) the bytes as before.
++#if defined(__3DS__)
++#include "re4_gx_fifo.h"
++#undef GX_WRITE_XF_REG
++#define GX_WRITE_XF_REG(addr, value) \
++do { \
++    u32 xfWord = (u32)(value); \
++    re4_gx_put_xf(0x1000 + (addr), &xfWord); \
++} while (0)
++#undef GX_WRITE_RAS_REG
++#define GX_WRITE_RAS_REG(value) re4_gx_put_bp((u32)(value))
++#undef GX_WRITE_SOME_REG2
++#undef GX_WRITE_SOME_REG3
++#undef GX_WRITE_SOME_REG4
++#define GX_WRITE_SOME_REG2(a, b, c, addr) re4_gx_put_cp((b), (u32)(c))
++#define GX_WRITE_SOME_REG3(a, b, c, addr) re4_gx_put_cp((b), (u32)(c))
++#define GX_WRITE_SOME_REG4(a, b, c, addr) re4_gx_put_cp((b), (u32)(c))
++#endif
++
+ // REG MACROS
+ 
+ #define GET_REG_FIELD(reg, size, shift) ((int)((reg) >> (shift)) & ((1 << (size)) - 1))
+--- a/src/lib/GXTransform.c
++++ b/src/lib/GXTransform.c
+@@ -184,6 +184,10 @@
+     addr = id * 4;
+     reg = addr | 0xB0000;
+ 
++#if defined(__3DS__)
++    re4_gx_put_xf(reg, &mtx[0][0]);  // port: the 12 words straight into the decoder (__gx.h)
++    return;
++#endif
+     GX_WRITE_U8(0x10);
+     GX_WRITE_U32(reg);
+ #if DEBUG
+@@ -230,6 +234,13 @@
+     addr = id * 3 + 0x400;
+     reg = addr | 0x80000;
+ 
++#if defined(__3DS__)
++    {  // port: the 3x3 part straight into the decoder (__gx.h)
++        f32 w[9] = {mtx[0][0], mtx[0][1], mtx[0][2], mtx[1][0], mtx[1][1], mtx[1][2], mtx[2][0], mtx[2][1], mtx[2][2]};
++        re4_gx_put_xf(reg, w);
++        return;
++    }
++#endif
+     GX_WRITE_U8(0x10);
+     GX_WRITE_U32(reg);
+ #if DEBUG
+@@ -256,6 +267,10 @@
+     addr = id * 3 + 0x400;
+     reg = addr | 0x80000;
+ 
++#if defined(__3DS__)
++    re4_gx_put_xf(reg, &mtx[0][0]);  // port: straight into the decoder (__gx.h)
++    return;
++#endif
+     GX_WRITE_U8(0x10);
+     GX_WRITE_U32(reg);
+ #if DEBUG
+@@ -312,6 +327,10 @@
+     count = (type == GX_MTX2x4) ? 8 : 12;
+     reg = addr | ((count - 1) << 16);
+ 
++#if defined(__3DS__)
++    re4_gx_put_xf(reg, &mtx[0][0]);  // port: the 8 or 12 words straight into the decoder (__gx.h)
++    return;
++#endif
+     GX_WRITE_U8(0x10);
+     GX_WRITE_U32(reg);
+ #if DEBUG

@@ -1,0 +1,27 @@
+# The port, stage 3.6: PSVEC* without a square root inline (port/whole/include/re4_psvec_inline.h,
+# the SDK C_* bodies statement for statement: the same results) in include/vec.h and
+# include/dolphin/mtx.h; the call through runtime/mtx_ps.c cost two branches. A port patch.
+diff -ruN a/include/dolphin/mtx.h b/include/dolphin/mtx.h
+--- a/include/dolphin/mtx.h	2026-11-03 13:07:55.633516807 +0900
++++ b/include/dolphin/mtx.h	2026-11-03 13:07:55.984494454 +0900
+@@ -300,6 +300,8 @@
+ #define VECDistance       PSVECDistance
+ #endif
+ 
++#include "re4_psvec_inline.h" /* the port: PSVEC* inline (patch 0160) */
++
+ void C_VECHalfAngle(const Vec* a, const Vec* b, Vec* half);
+ void C_VECReflect(const Vec* src, const Vec* normal, Vec* dst);
+ 
+diff -ruN a/include/vec.h b/include/vec.h
+--- a/include/vec.h	2026-11-03 13:07:55.620347760 +0900
++++ b/include/vec.h	2026-11-03 13:07:55.984388456 +0900
+@@ -69,6 +69,8 @@
+ }
+ #endif
+ 
++#include "re4_psvec_inline.h" /* the port: PSVEC* inline (patch 0160) */
++
+ #endif
+ 
+ // Mtx copy as the original's inlined word loop (three rows of four f32 through row pointers); a plain

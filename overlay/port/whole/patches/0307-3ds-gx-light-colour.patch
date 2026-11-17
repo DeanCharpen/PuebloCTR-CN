@@ -1,0 +1,16 @@
+# The 3DS port, stage 3.9: the light colour of GXLoadLightObjImm straight into the decoder (patch 0154)
+# as its bytes in their order (patch 0033: GXColor r g b a in memory, RGBA to GX); the object copied
+# whole gave a b g r on the little-endian ARM: the lights warm in white were blue and dim (r100). A port patch.
+--- a/src/lib/GXLight.c
++++ b/src/lib/GXLight.c
+@@ -390,6 +390,10 @@
+         u32 w[16];
+         __builtin_memcpy(w, obj, sizeof(w));
+         w[0] = w[1] = w[2] = 0;
++        {  // the colour bytes in their order (patch 0033): a word of the object is a b g r here
++            const u8* c = (const u8*)&w[3];
++            w[3] = (u32) c[0] << 24 | (u32) c[1] << 16 | (u32) c[2] << 8 | c[3];
++        }
+         re4_gx_put_xf(addr | 0xF0000, w);
+         __GXData->bpSentNot = 1;
+         return;

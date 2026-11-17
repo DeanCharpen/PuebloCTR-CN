@@ -1,0 +1,44 @@
+# The 3DS port: the distance drawn, RE4_DRAWDIST=P (percent, runtime/part_cull.cpp re4_draw_dist): with the fog on,
+# its start and end (GXSetFog) and the far plane (View.setFarPlane, at the fog's end as the game puts it) times P/100
+# - the distance fades into the fog the same way, nearer. 100 (default): times 1.0f, as it was. The same lines (the
+# declaration on `extern u8 min_lod;`): no line numbers move. A port patch.
+diff -ruN a/src/game/light.cpp b/src/game/light.cpp
+--- a/src/game/light.cpp	2026-11-04 23:07:37.131143044 +0900
++++ b/src/game/light.cpp	2026-11-04 23:07:37.266529346 +0900
+@@ -19,7 +19,7 @@
+ 
+ // game/trans.cpp texture LOD / TEV scale settings
+ // trans.cpp; uninitialised there, so not in trans.h (a header extern reorders trans.cpp's .bss / .sbss)
+-extern u8 min_lod;
++extern u8 min_lod; extern "C" f32 re4_draw_dist(void);  /* port: RE4_DRAWDIST (runtime/part_cull.cpp) */
+ extern u8 max_lod;
+ extern f32 lod_bias;
+ 
+@@ -427,11 +427,11 @@
+         fog->Color.g = (u8) (((f32) fog->Color.g * m_Hokan + (f32) fogNew.Color.g) / (m_Hokan + 1));
+         fog->Color.b = (u8) (((f32) fog->Color.b * m_Hokan + (f32) fogNew.Color.b) / (m_Hokan + 1));
+         fog->Color.a = (u8) (((f32) fog->Color.a * m_Hokan + (f32) fogNew.Color.a) / (m_Hokan + 1));
+-        GXSetFog(fog->Type, fog->Start, fog->End, ZNEAR, ZFAR, fog->Color);
++        GXSetFog(fog->Type, fog->Start * re4_draw_dist(), fog->End * re4_draw_dist(), ZNEAR, ZFAR, fog->Color);
+         if (fog->Type == 0) {
+             View.setFarPlane(ZFAR);
+         } else {
+-            View.setFarPlane(fog->End * (1.0f - LightEnv.far_play_ratio) + 1.0f);
++            View.setFarPlane(fog->End * re4_draw_dist() * (1.0f - LightEnv.far_play_ratio) + 1.0f);
+         }
+     }
+ }
+@@ -863,11 +863,11 @@
+         black.r = black.g = black.b = black.a = c;
+         GXSetFog(0, 0.0f, 0.0f, ZNEAR, ZFAR, black);
+     } else {
+-        GXSetFog(fog->Type, fog->Start, fog->End, ZNEAR, ZFAR, fog->Color);
++        GXSetFog(fog->Type, fog->Start * re4_draw_dist(), fog->End * re4_draw_dist(), ZNEAR, ZFAR, fog->Color);
+         if (fog->Type == 0) {
+             View.setFarPlane(ZFAR);
+         } else {
+-            View.setFarPlane(fog->End * (1.0f - LightEnv.far_play_ratio) + 1.0f);
++            View.setFarPlane(fog->End * re4_draw_dist() * (1.0f - LightEnv.far_play_ratio) + 1.0f);
+         }
+     }
+ }

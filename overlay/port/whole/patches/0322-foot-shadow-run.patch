@@ -1,0 +1,58 @@
+# The 3DS port, the fight in r104 (bench8): DrawFootShadow draws a character's foot shadows one after another with
+# nothing else drawn between them; drawShadowParts set the whole GX state (~30 calls, the view's inverse) for each
+# 4-vertex quad (~31 us). The first quad of the run sets it as before, the next ones only the channel colour (from
+# their alpha) and the texture when another: the GX state before each quad is the same. A port patch.
+diff -ruN a/src/game/foot_shadow.cpp b/src/game/foot_shadow.cpp
+--- a/src/game/foot_shadow.cpp	2026-11-04 23:39:10.676033888 +0900
++++ b/src/game/foot_shadow.cpp	2026-11-04 23:39:12.359952573 +0900
+@@ -10,6 +10,11 @@
+ #include "math_sub.h"
+ #include "foot_shadow.h"
+ 
++/* port: a run of foot shadow quads with nothing else drawn between them (DrawFootShadow's loop over the parts):
++   the first sets the GX state as drawShadowParts always did, the next ones only their colour and texture */
++static int s_shdRun;
++static GXTexObj* s_shdTex;
++
+ // One shadow quad.
+ struct SHD_DISP {
+     Vec pos;
+@@ -157,6 +162,7 @@
+             rate *= (f32) (255 - pMod->Shd_color) / 255.0f;
+             prevOn = 0;
+             prevCnt = 0;
++            s_shdRun = 0;
+             for (i = 0; i < tbl->nTbl; i++) {
+                 FOOTSHADOW_DATA* dat = &tbl->dat[i];
+                 cParts* p = pMod->getPartsPtr(dat->joint);
+@@ -227,6 +233,20 @@
+     GXColor col;
+     u8 a;
+ 
++    if (s_shdRun) {
++        a = (u8) alpha;
++        {
++            s8 c = a;
++            col.a = a;
++            col.r = col.g = col.b = c;
++        }
++        GXSetChanAmbColor(4, col);
++        GXSetChanMatColor(4, col);
++        if (tex != s_shdTex) {
++            GXLoadTexObj(tex, 0);
++            s_shdTex = tex;
++        }
++    } else {
+     GXSetAlphaCompare(7, 0, 1, 7, 0);
+     a = (u8) alpha;
+     GXSetNumChans(1);
+@@ -264,6 +284,9 @@
+     GXSetVtxDesc(0xD, 1);
+     GXSetVtxAttrFmt(0, 9, 1, 4, 0);
+     GXSetVtxAttrFmt(0, 0xD, 1, 4, 0);
++    s_shdRun = 1;
++    s_shdTex = tex;
++    }
+     GXBegin(0x80, 0, 4);
+     GXPosition3f32(pos->x - size, pos->y, pos->z - size);
+     GXTexCoord2f32(0.0f, 0.0f);

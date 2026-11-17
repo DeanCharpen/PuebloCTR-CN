@@ -1,0 +1,115 @@
+# The 3DS port, the fight in r104 (bench8): commonModelTrans set the vertex format of every model again (GXClearVtxDesc,
+# GXSetVtxDesc, GXSetVtxAttrFmt), and the next display list call wrote it to the CP registers (__GXSetVCD, __GXSetVAT,
+# __GXCalculateVLim). The format depends on the model's flags and shift only: a model with the key of the one before
+# that finds the words that setup left in __GXData leaves its calls out (GXAttr.c re4_gx_vtx_same/keep). The same GX
+# state on every draw. RE4_VTX_KEEP=0: the original. A port patch.
+diff -ruN a/src/game/trans.cpp b/src/game/trans.cpp
+--- a/src/game/trans.cpp	2026-11-05 00:26:10.722516128 +0900
++++ b/src/game/trans.cpp	2026-11-05 00:26:10.849645047 +0900
+@@ -309,7 +309,7 @@
+ void TextureBlend(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn);
+ void TextureBlend2(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn);
+ void TextureBlend3(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn);
+-void materialSetup(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn);
++void materialSetup(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn); extern "C" int re4_gx_vtx_same(u32 key); extern "C" void re4_gx_vtx_keep(u32 key);  // port: GXAttr.c
+ static void specularSetup(cPolyHeader* part, cModelInfo* info, int flag);
+ void specularSetup2(cPolyHeader* part, int flag);
+ void GlobalIlluminationSetup(cPolyHeader* part, int nrm8);
+@@ -1146,26 +1146,26 @@
+         GXLoadNrmMtxImm(nrm, 0);
+         GXSetCurrentMtx(0);
+         tex = d->pTex;
+-        GXClearVtxDesc();
+-        GXSetVtxDesc(9, 3);
+-        GXSetVtxDesc(10, 3);
+-        GXSetVtxDesc(13, 3);
+-        if (d->flags & 0x20000000) {
++        u32 re4Vk = (d->flags & 0xA0000000) | d->shift; int re4Vs = re4_gx_vtx_same(re4Vk); if (!re4Vs) GXClearVtxDesc();  // port: the format kept
++        if (!re4Vs) GXSetVtxDesc(9, 3);
++        if (!re4Vs) GXSetVtxDesc(10, 3);
++        if (!re4Vs) GXSetVtxDesc(13, 3);
++        if (re4Vs) {} else if (d->flags & 0x20000000) {
+             GXSetVtxAttrFmt(0, 10, 0, 1, 0);
+         } else {
+             GXSetVtxAttrFmt(0, 10, 0, 3, 14);
+         }
+         if (d->flags & 0x80000000) {
+             void* clr = d->pClr;
+-            GXSetVtxAttrFmt(0, 13, 1, 3, 8);
+-            GXSetVtxDesc(11, 3);
+-            GXSetVtxAttrFmt(0, 11, 1, 5, 0);
++            if (!re4Vs) GXSetVtxAttrFmt(0, 13, 1, 3, 8);
++            if (!re4Vs) GXSetVtxDesc(11, 3);
++            if (!re4Vs) GXSetVtxAttrFmt(0, 11, 1, 5, 0);
+             GXSetArray(11, clr, 4);
+         } else {
+-            GXSetVtxAttrFmt(0, 13, 1, 2, 15);
++            if (!re4Vs) GXSetVtxAttrFmt(0, 13, 1, 2, 15);
+         }
+         GXSetArray(13, tex, 4);
+-        GXSetVtxAttrFmt(0, 9, 1, 3, d->shift);
++        if (!re4Vs) { GXSetVtxAttrFmt(0, 9, 1, 3, d->shift); re4_gx_vtx_keep(re4Vk); }
+         if ((m->be_flag & 0x4000) || (d->weight_palette_num <= 1 && d->weight_ext_num <= 0xFF && !(info->be_flag & 2) && d->nParts == 1)) {
+             GXSetArray(9, d->vtxOrig, 8);
+             if (d->flags & 0x20000000) {
+diff -ruN a/src/lib/GXAttr.c b/src/lib/GXAttr.c
+--- a/src/lib/GXAttr.c	2026-11-05 00:26:10.574216778 +0900
++++ b/src/lib/GXAttr.c	2026-11-05 00:26:10.849901835 +0900
+@@ -640,3 +640,57 @@
+     GX_WRITE_XF_REG(0x3F, nTexGens);
+     __GXData->dirtyState |= 4;
+ }
++
++/* port (3.6, patch 0323): the vertex format commonModelTrans sets for a model depends on a key (the model's flags
++   and position shift) only. re4_gx_vtx_keep stores the key and the words its calls left in __GXData;
++   re4_gx_vtx_same says whether the next model with that key finds the same words, and then it leaves its calls out:
++   from the same words they give the same words, and the CP registers either hold them or a dirty bit still says
++   they will be written. RE4_VTX_KEEP=0: always the calls. Not while display lists carry register commands (3DS). */
++#include <stdlib.h>
++
++static int re4VtxOn = -1;
++static int re4VtxValid;
++static u32 re4VtxKey, re4VtxWords[6];
++
++static void re4VtxRead(u32* w)
++{
++    w[0] = __GXData->vcdLo;
++    w[1] = __GXData->vcdHi;
++    w[2] = (u32) __GXData->hasNrms | ((u32) __GXData->hasBiNrms << 8) | ((u32) __GXData->nrmType << 16);
++    w[3] = __GXData->vatA[0];
++    w[4] = __GXData->vatB[0];
++    w[5] = __GXData->vatC[0];
++}
++
++int re4_gx_vtx_same(u32 key)
++{
++    u32 w[6];
++    int i;
++
++    if (re4VtxOn < 0) {
++        const char* e = getenv("RE4_VTX_KEEP");
++        re4VtxOn = e ? atoi(e) : 1;
++    }
++#if defined(__3DS__)
++    if (re4_gxq_list_regs) {
++        return 0;
++    }
++#endif
++    if (!re4VtxOn || !re4VtxValid || key != re4VtxKey) {
++        return 0;
++    }
++    re4VtxRead(w);
++    for (i = 0; i < 6; i++) {
++        if (w[i] != re4VtxWords[i]) {
++            return 0;
++        }
++    }
++    return 1;
++}
++
++void re4_gx_vtx_keep(u32 key)
++{
++    re4VtxKey = key;
++    re4VtxRead(re4VtxWords);
++    re4VtxValid = 1;
++}

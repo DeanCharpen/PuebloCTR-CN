@@ -1,0 +1,125 @@
+# Port patch 0334 (2026-11-10): cLightMgr::setModel2, setCloth and
+# setEsp look at the places of the light pool a light lives in (a list made again whenever cLightMgr::construct runs or
+# the array changes), not all nArray places on every model; every test inside as before, the same lights in the same
+# order. RE4_LIGHTLIST=0: every place.
+diff -ruN a/src/game/light.cpp b/src/game/light.cpp
+--- a/src/game/light.cpp	2026-11-10 16:13:00.920464707 +0900
++++ b/src/game/light.cpp	2026-11-10 16:13:01.108507903 +0900
+@@ -121,7 +121,7 @@
+ }
+ 
+ // Unit construction: placement-news the cLight subclass for type id (1, 2, 6, 7, 8 have their own).
+-int cLightMgr::construct(cLight* p, u32 id)
++extern int re4_light_list_dirty; const u16* re4_light_list(cLightMgr* m, u32* count); int cLightMgr::construct(cLight* p, u32 id)  /* port (patch 0334): re4_light_list_dirty below */
+ {
+     switch (id) {
+     default:
+@@ -143,7 +143,7 @@
+         new (p) cLight08;
+         break;
+     }
+-    return 1;
++    re4_light_list_dirty = 1; return 1;  /* port (patch 0334): a light alive in a place: the places' list again */
+ }
+ 
+ // Creates a light from a cLightWork record (front of the pool), copies it and runs its first move.
+@@ -488,8 +488,8 @@
+     int hit;
+     f32 pri[8];
+ 
+-    memclr_asm(pMod->LightInfo.pLight, sizeof(pMod->LightInfo.pLight));
+-    for (i = 0; i < nArray; i++) {
++    memclr_asm(pMod->LightInfo.pLight, sizeof(pMod->LightInfo.pLight)); u32 re4_n; const u16* re4_idx = re4_light_list(this, &re4_n);
++    for (u32 re4_k = 0; re4_k < re4_n; re4_k++) { i = re4_idx[re4_k];  /* port (patch 0334): the places lights live in */
+         l = fastAt(i);
+         if ((l->be_flag & 3) != 3) {
+             continue;
+@@ -552,8 +552,8 @@
+         pLog->err(0, 0, "cLightMgr::setCloth() INVALID PTR %08x", pMod);
+         return;
+     }
+-    n = 0;
+-    for (i = 0; i < nArray; i++) {
++    n = 0; u32 re4_n; const u16* re4_idx = re4_light_list(this, &re4_n);
++    for (u32 re4_k = 0; re4_k < re4_n; re4_k++) { i = re4_idx[re4_k];  /* port (patch 0334) */
+         l = fastAt(i);
+         if ((l->be_flag & 3) != 3) {
+             continue;
+@@ -589,7 +589,10 @@
+     u32 i;
+ 
+     pEnv->Light_num = 0;
+-    for (i = 0; i < nArray; i++) {
++    u32 re4_n;
++    const u16* re4_idx = re4_light_list(this, &re4_n);
++    for (u32 re4_k = 0; re4_k < re4_n; re4_k++) {  /* port (patch 0334) */
++        i = re4_idx[re4_k];
+         l = fastAt(i);
+         if ((l->be_flag & 3) != 3) {
+             continue;
+@@ -1740,3 +1743,65 @@
+ }
+ 
+ cLightMgr LightMgr;
++
++/* PORT (patch 0334, C3 of the 3DS port): the places of the light pool a light lives in, for setModel2,
++ * setCloth and setEsp (each looked at all nArray places, 100, on every model: 120-264 calls a frame of the r104 fight,
++ * 14-17 lights alive). The places with be_flag bit 0 when the list was made, in order; the loops test each light as
++ * before, so a light dead since is left out there. Bit 0 is set by the cLight constructor only (be_flag = 3), run by
++ * cLightMgr::construct, which marks the list old; another array (pArray, nArray, size) makes it again too.
++ * RE4_LIGHTLIST=0: every place, as before; 2: the list, and on each call every place checked: a light alive
++ * (be_flag & 3 == 3) not in the list is logged ("light list: ..."). */
++#include <stdlib.h>
++extern "C" void re4_log(const char* fmt, ...);
++int re4_light_list_dirty = 1;
++static const void* gLightListArray;
++static u32 gLightListN = ~0u, gLightListSize, gLightListCount, gLightListMissed, gLightListChecks;
++static int gLightListOn = -1;
++static u16 gLightListIdx[1024];
++
++static void lightListCheck(cLightMgr* m)
++{
++    u32 k = 0;
++    for (u32 i = 0; i < m->nArray && i < 1024; i++) {
++        while (k < gLightListCount && gLightListIdx[k] < i) {
++            k++;
++        }
++        const bool listed = k < gLightListCount && gLightListIdx[k] == i;
++        if (!listed && (m->fastAt(i)->be_flag & 3) == 3 && ++gLightListMissed <= 8) {
++            re4_log("light list: place %u alive (be_flag 0x%x), not in the list of %u (room r%03x)", (unsigned) i,
++                    (unsigned) m->fastAt(i)->be_flag, (unsigned) gLightListCount, (unsigned) pG->room_id);
++        }
++    }
++    if ((++gLightListChecks & 0xFFFF) == 0) {
++        re4_log("light list: %u calls checked, %u lights alive not in the list", (unsigned) gLightListChecks,
++                (unsigned) gLightListMissed);
++    }
++}
++
++const u16* re4_light_list(cLightMgr* m, u32* count)
++{
++    if (gLightListOn < 0) {
++        const char* v = getenv("RE4_LIGHTLIST");
++        gLightListOn = !(v && *v == '0') ? (v && *v == '2' ? 2 : 1) : 0;
++        re4_log("light list (patch 0334, RE4_LIGHTLIST %d): the lights' places a model looks at %s", gLightListOn,
++                gLightListOn ? "from the list" : "all");
++    }
++    const u32 n = m->nArray;
++    if (re4_light_list_dirty || (const void*) m->pArray != gLightListArray || n != gLightListN || m->size != gLightListSize) {
++        re4_light_list_dirty = 0;
++        gLightListArray = m->pArray;
++        gLightListN = n;
++        gLightListSize = m->size;
++        gLightListCount = 0;
++        for (u32 i = 0; i < n && i < 1024; i++) {
++            if (!gLightListOn || (m->fastAt(i)->be_flag & 1)) {
++                gLightListIdx[gLightListCount++] = (u16) i;
++            }
++        }
++    }
++    if (gLightListOn == 2) {
++        lightListCheck(m);
++    }
++    *count = gLightListCount;
++    return gLightListIdx;
++}

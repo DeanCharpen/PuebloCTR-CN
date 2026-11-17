@@ -1,0 +1,3 @@
+# tools/ui_assets.py, tools/cia_assets.py (the committed files were made with these)
+Pillow==13.0.0
+numpy==2.5.4

@@ -1,0 +1,33 @@
+# The game's render targets (TexRenderMng: r300's sea, mirrors, ...): tag their pass in the GX stream - its begin with
+# the copy's EFB x and the target's size, its end after the copy (re4_gx_texrender, runtime/gx_decode.cpp). The 3DS
+# renderer draws the pass into a corner of its frame the target's size and copies it (port/whole/3ds/gx_3ds.cpp). The same lines.
+diff -ruN a/src/game/TexRender.cpp b/src/game/TexRender.cpp
+--- a/src/game/TexRender.cpp	2026-11-17 02:12:45.747001225 +0900
++++ b/src/game/TexRender.cpp	2026-11-17 02:12:46.354060489 +0900
+@@ -75,7 +75,7 @@
+ }
+ 
+ // EFB x offset that centres a 2x copy of the texture in the resized frame.
+-void RenderTexRenderMgr(TexRenderMng* m)
++extern "C" void re4_gx_texrender(unsigned int what, unsigned int a, unsigned int b); void RenderTexRenderMgr(TexRenderMng* m)
+ {
+     u32 ofs, w, h;
+ 
+@@ -96,7 +96,7 @@
+         h = 0x210;
+     }
+     EFBReSize(w, h);
+-    GXSetScissor(ofs >> 1, 0, m->GetWSize() << 1, m->GetHSize() << 1);
++    GXSetScissor(ofs >> 1, 0, m->GetWSize() << 1, m->GetHSize() << 1); re4_gx_texrender(1, ofs >> 1 | (u32) m->GetWSize() << 16, m->GetHSize());  /* port */
+ }
+ 
+ // OT callback (slot's OT, after its render pass): copies the EFB into the target's buffer at
+@@ -155,7 +155,7 @@
+         GXInitTexObjLOD(m->GetTexObj(), 1, 1, 0.0f, 0.0f, 0.0f, 0, 0, 0);
+         g_draw = 1;
+     }
+-    if (m == &g_RndMgr[g_RndMgrNum - 1]) {
++    re4_gx_texrender(2, 0, 0); if (m == &g_RndMgr[g_RndMgrNum - 1]) {  /* port: the pass over (gx_3ds.cpp) */
+         StaFlagOff(pG, STA_TEX_RENDER);
+         ScreenReSize(0x200, 0x1C0);
+         SetScissorState();

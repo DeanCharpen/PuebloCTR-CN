@@ -1,0 +1,204 @@
+# The 3DS port, stage 3.6: a run of effect sprites (EspCommonTrans, the ordering table's kind-8 entries one after
+# another) leaves out the GX calls whose arguments the sprite before set (blend mode, TEV stage 0 and channel, material
+# colour, current matrix), and a sprite without lighting loads no normal matrix. re4_esp_state / RE4_ESP_STATE:
+# 0 the original, 1 the calls, 2 (default) both. The same GX state on every draw. A port patch.
+diff -ruN a/include/trans_ot.h b/include/trans_ot.h
+--- a/include/trans_ot.h	2026-11-04 07:47:11.302348277 +0900
++++ b/include/trans_ot.h	2026-11-04 07:47:11.589993576 +0900
+@@ -37,6 +37,9 @@
+ extern OtMirrorWork g_OtMirrirWk[2];
+ extern f32 OT_MUL;
+ extern int g_NowExecOtType;
++/* port (3.6): the entries ExecOt has run (all tables) and the function of the one running (0 outside) */
++extern u32 g_OtSerial;
++extern void (*g_OtCurFunc)(void*);
+ 
+ void InitOt();
+ void ClearOt();
+diff -ruN a/src/game/esp_sub.cpp b/src/game/esp_sub.cpp
+--- a/src/game/esp_sub.cpp	2026-11-04 07:47:11.334346221 +0900
++++ b/src/game/esp_sub.cpp	2026-11-04 07:47:11.590521769 +0900
+@@ -1,5 +1,7 @@
+ // game/esp_sub: the shared part of the effect sprites (D:/Bio4/Prog/esp_sub.cpp), with the cEsp base
+ // members, the common sprite draw and EspSeqSet, which turns an effect sequence record into a live esp.
++#include <stdlib.h>
++
+ #include "atari.h"
+ #include "light.h"
+ #include "gx.h"
+@@ -27,6 +29,44 @@
+ void GetPosXY(Vec* p0, Vec* p1, Vec* p2, Vec* p3, f32 u, f32 v, Vec* out);
+ void Esp1b_SpTrans(cEsp* esp);
+ 
++/* port (3.6): the GX state a run of sprites shares. The ordering table's kind-8 entries (EspTrans: EspCommonTrans
++   without shimmer, nega, mask) come one after another, and every sprite sets the blend mode, ChannelSet's TEV stage 0
++   and channel, the material colour and the current matrix again -- mostly the values of the sprite before. Level
++   re4_esp_state (RE4_ESP_STATE, 2 by default): 0 the original; 1 a call is left out when its arguments are those the
++   sprite before in the run set (GX keeps them: nothing runs between the entries); 2 also no normal matrix for a sprite
++   without lighting (ChannelSet turns the channel's lights off, the texture coordinates come from TEX0). A run: a call
++   straight from the table, the entry before of kind 8 and its call the last one seen (g_OtSerial). */
++int re4_esp_state = -1;
++static struct {
++    u32 serial;      // g_OtSerial of the last call straight from the table
++    u8 live;         // the last call was one
++    u8 ok;           // this call continues the run
++    u8 haveBlend, haveChan, haveCol, haveMtx;
++    u8 blend[4];
++    u32 chanKey;     // m_Tool_flg & 0x20080 of the unlit TEV/channel setup
++    GXColor col;
++} s_espRun;
++
++static void espRunForget()
++{
++    s_espRun.haveBlend = s_espRun.haveChan = s_espRun.haveCol = s_espRun.haveMtx = 0;
++}
++
++static void espRunEnter()
++{
++    if (re4_esp_state < 0) {
++        const char* e = getenv("RE4_ESP_STATE");
++        re4_esp_state = e ? atoi(e) : 2;
++    }
++    const int direct = re4_esp_state > 0 && g_OtCurFunc == (void (*)(void*)) EspCommonTrans;
++    s_espRun.ok = direct && s_espRun.live && OtGetPrevKind() == 8 && s_espRun.serial + 1 == g_OtSerial;
++    if (!s_espRun.ok) {
++        espRunForget();
++    }
++    s_espRun.live = direct;
++    s_espRun.serial = g_OtSerial;
++}
++
+ 
+ // The effect code converts with 3.14, not PI.
+ #undef DEG2RAD
+@@ -71,8 +111,17 @@
+ // Default Trans (draw) entry shared by the sprite effects: dispatches to the shimmer / nega variants,
+ // otherwise draws the sprite quad (g_EspCommonDisplayList) with the effect's texture, an optional
+ // mask texture in TEV stage 1, and the colour from ChannelSet.
++static void EspCommonTransBody(cEsp* esp);
++
++// port (3.6): the body below; s_espRun.ok holds only while it runs
+ void EspCommonTrans(cEsp* esp)
+ {
++    EspCommonTransBody(esp);
++    s_espRun.ok = 0;
++}
++
++static void EspCommonTransBody(cEsp* esp)
++{
+     static int s_proj_type;
+     static int s_tex_no;
+     static cAnm* s_pAnm;
+@@ -91,7 +140,17 @@
+         EspCommonTransNega(esp, 2);
+         return;
+     }
+-    GXSetBlendMode(esp->m_Blend_mode, esp->m_Src_factor, esp->m_Dst_factor, esp->m_Logic_op);
++    espRunEnter();  // port (3.6)
++    if (!s_espRun.ok || !s_espRun.haveBlend || s_espRun.blend[0] != esp->m_Blend_mode ||
++        s_espRun.blend[1] != esp->m_Src_factor || s_espRun.blend[2] != esp->m_Dst_factor ||
++        s_espRun.blend[3] != esp->m_Logic_op) {
++        GXSetBlendMode(esp->m_Blend_mode, esp->m_Src_factor, esp->m_Dst_factor, esp->m_Logic_op);
++        s_espRun.blend[0] = esp->m_Blend_mode;
++        s_espRun.blend[1] = esp->m_Src_factor;
++        s_espRun.blend[2] = esp->m_Dst_factor;
++        s_espRun.blend[3] = esp->m_Logic_op;
++        s_espRun.haveBlend = 1;
++    }
+     if (OtGetPrevKind() != 8) {
+         if (ESP_PARTS_SCREEN(esp)) {
+             Mtx44 proj;
+@@ -265,13 +324,19 @@
+         PSMTXConcat(esp->parent->mat, esp->m_Mat, esp->m_Mat);
+         PSMTXConcat(pG->Camera.v_mat, esp->m_Mat, esp->m_Mat);
+     }
+-    PSMTXInverse(esp->m_Mat, inv);
+-    PSMTXTranspose(inv, inv);
+-    GXLoadNrmMtxImm(inv, 0);
++    if (re4_esp_state < 2 || (esp->m_Tool_flg & 0x40)) {  // port (3.6): the normal matrix only with lighting
++        PSMTXInverse(esp->m_Mat, inv);
++        PSMTXTranspose(inv, inv);
++        GXLoadNrmMtxImm(inv, 0);
++    }
+     GXLoadPosMtxImm(esp->m_Mat, 0);
+-    GXSetCurrentMtx(0);
++    if (!s_espRun.ok || !s_espRun.haveMtx) {
++        GXSetCurrentMtx(0);
++        s_espRun.haveMtx = 1;
++    }
+     if (esp->m_Tool_flg & 0x4000) {
+         int no = esp->m_MaskTex_id;
++        espRunForget();  // port (3.6)
+         ESP_TEX_WK* tw = EspGetTexWk(no, 1);
+         if (tw->Owner == EFF_NONE) {
+             pLog->err(0, 0, "ESP : Mask_TexId[%x] no data", no);
+@@ -323,6 +388,7 @@
+     }
+     if (esp->m_Flg & 0x10) {
+         Esp1b_SpTrans(esp);
++        espRunForget();  // port (3.6)
+     } else {
+         GXCallDisplayList(g_EspCommonDisplayList, 0x60);
+     }
+@@ -976,12 +1042,14 @@
+     Vec d;
+     cEspSystem* sys = g_pEspSys;
+ 
++    // port (3.6): s_espRun.ok only inside EspCommonTrans's run (it clears it on the way out)
+     if (m_Tool_flg & 0x40) {
+         GXSetTevOp(0, 0);
+         GXSetTevColorIn(0, 0xF, 8, 0xA, 0xF);
+         GXSetTevColorOp(0, 0, 0, 2, 1, 0);
+         commonEspLightSet(sys->EspLightEnv.LightData, sys->EspLightEnv.Light_num);
+-    } else {
++        espRunForget();
++    } else if (!s_espRun.ok || !s_espRun.haveChan || s_espRun.chanKey != (m_Tool_flg & 0x20080)) {
+         GXSetTevOp(0, 0);
+         if (m_Tool_flg & 0x80) {
+             GXSetTevColorOp(0, 0, 0, 2, 1, 0);
+@@ -991,6 +1059,8 @@
+         }
+         GXSetNumChans(1);
+         GXSetChanCtrl(4, 0, 0, 0, 0, 0, 2);
++        s_espRun.chanKey = m_Tool_flg & 0x20080;
++        s_espRun.haveChan = 1;
+     }
+     if (m_Flg & 1) {
+         col.r = (u8) (m_Col_r * m_Col_a * (1.0f / 255.0f));
+@@ -1040,7 +1110,12 @@
+             }
+         }
+     }
+-    GXSetChanMatColor(4, col);
++    if (!s_espRun.ok || !s_espRun.haveCol || s_espRun.col.r != col.r || s_espRun.col.g != col.g ||
++        s_espRun.col.b != col.b || s_espRun.col.a != col.a) {  // port (3.6)
++        GXSetChanMatColor(4, col);
++        s_espRun.col = col;
++        s_espRun.haveCol = 1;
++    }
+     {
+         int ret = 0;
+         if (col.a != 0) {
+diff -ruN a/src/game/trans_ot.cpp b/src/game/trans_ot.cpp
+--- a/src/game/trans_ot.cpp	2026-11-04 07:47:11.447627551 +0900
++++ b/src/game/trans_ot.cpp	2026-11-04 07:47:11.590152863 +0900
+@@ -30,6 +30,8 @@
+ f32 OT_MUL = 0.05f;
+ asm(".section .sdata; .balign 8");
+ int g_NowExecOtType;
++u32 g_OtSerial;               // port (3.6)
++void (*g_OtCurFunc)(void*);  // port (3.6)
+ 
+ // Boot: allocates each table's bucket array (Ot_max_tbl sizes) and clears them.
+ void InitOt()
+@@ -290,7 +292,10 @@
+             if (p->data) {
+                 count++;
+                 re4_gx_owner(p->data, (void*) p->func, type); /* port: the entry's object (patch 0137) */
++                g_OtSerial++;  // port (3.6)
++                g_OtCurFunc = p->func;
+                 p->func(p->data);
++                g_OtCurFunc = 0;
+                 w->prev_kind = p->kind;
+             }
+         }

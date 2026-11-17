@@ -1,0 +1,15 @@
+# A bug of the game: r105_markOpenCk (the church door's crystal ball) copies only the 3x3 rotation into its Mtx and
+# multiplies the axes with PSMTXMultVec, which adds the translation column nobody wrote - stack garbage. Zero on the
+# GameCube by luck; on the 3DS the door never opened with the emblem upright. The column is 0 now; the same line.
+diff -ruN a/src/st1/r105.cpp b/src/st1/r105.cpp
+--- a/src/st1/r105.cpp	2026-11-05 10:36:02.231139546 +0900
++++ b/src/st1/r105.cpp	2026-11-05 10:36:03.398219882 +0900
+@@ -394,7 +394,7 @@
+     Vec vx = {1.0f, 0.0f, 0.0f};
+     Vec vy = {0.0f, 1.0f, 0.0f};
+     Vec vz = {0.0f, 0.0f, 1.0f};
+-    Mtx m;
++    Mtx m = {};  /* port: the translation column 0 - PSMTXMultVec adds it (stack garbage in the original) */
+ 
+     if (mk->obj[0].obj) {
+         r105_markMtxCopy(m, mk->obj[0].obj->mat);

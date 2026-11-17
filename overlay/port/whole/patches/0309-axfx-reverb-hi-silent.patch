@@ -1,0 +1,87 @@
+# The 3DS port, stage 3.11: the AXFX ReverbHi of patches 0047 / 0158 skips the arithmetic of a channel
+# in silence (input, the samples read from its lines, their last outputs, the low-pass and the
+# pre-delay all zero: the block only writes +0 and moves the lines on; r100's aux A surround is
+# always silent). Same results. A port patch.
+--- a/src/lib/reverb_hi.c
++++ b/src/lib/reverb_hi.c
+@@ -278,6 +278,50 @@
+     return v;
+ }
+ 
++/* port: patch 0159. A channel in silence: the input block all 0, and the 160 samples it reads
++ * from each line, the lines' last outputs, the low-pass and the pre-delay all +0, with finite
++ * coefficients. Then every value of the block is +0 (a finite coefficient times +0 is +0 or -0,
++ * plus +0 gives +0; +0 minus either zero is +0), the output 0: the block only writes +0 and moves
++ * the lines on, done here without the arithmetic. */
++static inline u32 AXFXPortBits(f32 v) {
++    u32 b;
++    __builtin_memcpy(&b, &v, 4);
++    return b;
++}
++
++static inline int AXFXPortFinite(f32 v) {
++    return (AXFXPortBits(v) & 0x7F800000u) != 0x7F800000u;
++}
++
++static int AXFXPortLineSilent(const AXFXPortLine* l) {
++    const u32* b = (const u32*)l->buf;
++    u32 bits = AXFXPortBits(l->last);
++    s32 at = l->out;
++    s32 n;
++
++    if (l->len <= 0) {
++        return 0;
++    }
++    for (n = 0; n < 160 && bits == 0; n++) {
++        bits |= b[at];
++        if (++at == l->len) {
++            at = 0;
++        }
++    }
++    return bits == 0;
++}
++
++static void AXFXPortLineSkip(AXFXPortLine* l) {
++    s32 n;
++
++    for (n = 0; n < 160; n++) {
++        AXFXPortWrite(l, 0.0f);
++        if (++l->out == l->len) {
++            l->out = 0;
++        }
++    }
++}
++
+ /* not static: dolphin/axfx.h declares it */
+ void DoCrossTalk(s32* l, s32* r, f32 cross, f32 invcross) {
+     s32 i;
+@@ -309,6 +353,29 @@
+         AXFXPortLoad(&c[i], &rv->C[k * 3 + i]);
+         AXFXPortLoad(&ap[i], &rv->AP[k * 3 + i]);
+     }
++    /* port: patch 0159, a channel in silence (above) */
++    if (AXFXPortBits(lp) == 0 && (preDelay == 0 || AXFXPortBits(p[0]) == 0) && AXFXPortFinite(g) &&
++        AXFXPortFinite(damping) && AXFXPortFinite(cc0) && AXFXPortFinite(cc1) && AXFXPortFinite(cc2) &&
++        AXFXPortFinite(wet) && AXFXPortFinite(dry)) {
++        s32 any = 0;
++
++        for (i = 0; i < 160; i++) {
++            any |= sptr[i];
++        }
++        if (any == 0) {
++            for (i = 0; i < 3 && AXFXPortLineSilent(&c[i]) && AXFXPortLineSilent(&ap[i]); i++) {
++            }
++            if (i == 3) {
++                for (i = 0; i < 3; i++) {
++                    AXFXPortLineSkip(&c[i]);
++                    AXFXPortLineSkip(&ap[i]);
++                    AXFXPortStore(&c[i], &rv->C[k * 3 + i]);
++                    AXFXPortStore(&ap[i], &rv->AP[k * 3 + i]);
++                }
++                return;
++            }
++        }
++    }
+     for (i = 0; i < 160; i++) {
+         f32 x = (f32)sptr[i];
+         f32 d = x;

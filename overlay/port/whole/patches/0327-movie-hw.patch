@@ -1,0 +1,122 @@
+# The 3DS port, stage 6.1: the movies through the New 3DS's H.264 decoder (runtime/re4_movie_hw.h, port/whole/3ds/
+# movie_3ds.cpp) where the platform plays them (their files converted beforehand): startApp asks re4_movie_hw_open and
+# leaves the CRI handle NULL; then appMain steps that player, drawTex draws the same quad with one GX_REPLACE stage
+# and a GX texture the renderer shows the frame through, and finishMovie / PlayPause / disp_info call no CRI. The
+# same lines (sofdec.cpp:463 in byte_views.json), the helpers at the end. Linux: no such player, the CRI one as
+# before. A port patch.
+diff -ruN a/src/game/sofdec.cpp b/src/game/sofdec.cpp
+--- a/src/game/sofdec.cpp	2026-11-05 11:23:25.411487470 +0900
++++ b/src/game/sofdec.cpp	2026-11-05 11:23:25.642578749 +0900
+@@ -33,7 +33,7 @@
+ extern "C" int re4_movie_subtitle(MWPLY hn);
+ static void* re4_movie_mes;     /* etc/movie.das (their cSofdec + 0x248) */
+ static u8* re4_movie_mes_old;   /* the message table 2 before it */
+-static int re4_movie_sbt_shown; /* a subtitle is up (their r13 - 0x7308) */
++static int re4_movie_sbt_shown; /* a subtitle is up (their r13 - 0x7308) */ extern "C" int re4_movie_hw_open(const char*), re4_movie_hw_step(int*); extern "C" void re4_movie_hw_close(int), re4_movie_hw_mark(const void*); static void re4MvdTex(TexObj* tex, int h); static void re4MvdTev(); /* port: patch 0327 */
+ 
+ 
+ // Sofdec frame count (1/100 s units after scaling) -> h:m:s.frac.
+@@ -179,13 +179,13 @@
+ 
+     switch (m_draw_mode) {
+     case 0:
+-        if (m_scn_ctrl.tex.ybuf == NULL) {
++        if (m_ap_obj.mwply == NULL) re4MvdTex(&m_scn_ctrl.tex, m_height); /* port: the 3DS's H.264 decoder (patch 0327) */ if (m_scn_ctrl.tex.ybuf == NULL) {
+             return;
+         }
+         setCamera(&m_scn_ctrl);
+         GXLoadTexObj(&m_scn_ctrl.tex.ytobj, 0);
+         GXLoadTexObj(&m_scn_ctrl.tex.ctobj, 1);
+-        setTevPrm(0, 1);
++        setTevPrm(0, 1); if (m_ap_obj.mwply == NULL) re4MvdTev(); /* port (patch 0327) */
+         GXSetBlendMode(1, 1, 0, 0);
+         PSMTXIdentity(tm);
+         GXLoadTexMtxImm(tm, 0x1E, 1);
+@@ -417,7 +417,7 @@
+     MWS_PLY_CPRM_SFD* cprm = &m_ap_obj.cprm;
+     MWPLY hn;
+ 
+-    cprm->compo_mode = 0;
++    if (re4_movie_hw_open(m_ap_obj.fname)) return 1; /* port: the 3DS's H.264 decoder (patch 0327) */ cprm->compo_mode = 0;
+     cprm->ftype = 1;
+     cprm->max_bps = 8000000;
+     cprm->nfrm_pool_wk = 4;
+@@ -470,7 +470,7 @@
+         m_be_flag |= 0x20;
+         return 0;
+     }
+-    ADXM_ExecMain();
++    if (m_ap_obj.mwply == NULL) return re4_movie_hw_step(&m_ap_obj.mwstat); /* port (patch 0327) */ ADXM_ExecMain();
+     mwPlyGetCurFrm(m_ap_obj.mwply, &frm);
+     if (frm.bufadr != NULL) {
+         loadMvFrmFx(m_ap_obj.mwply, &frm);
+@@ -497,7 +497,7 @@
+             m_is_set_black = 0;
+         }
+         m_frame_no = ((u16*) &m_ap_obj.frm.fno)[1];
+-        if (m_ap_obj.disp_flag == 1) {
++        if (m_ap_obj.disp_flag == 1 && m_ap_obj.mwply) { /* port: no CRI handle with patch 0327 */
+             disp_info(&m_ap_obj);
+         }
+         /* port: the subtitles as their cSofdec::draw (0x801615C0): text number from the table at
+@@ -526,9 +526,9 @@
+ void cSofdec::finishMovie()
+ {
+     re4_movie_end(m_ap_obj.mwply, m_be_flag & 0x20); /* port */
+-    mwPlyDestroy(m_ap_obj.mwply);
++    if (m_ap_obj.mwply) mwPlyDestroy(m_ap_obj.mwply); else re4_movie_hw_close(m_be_flag & 0x20); /* port (patch 0327) */
+     m_ap_obj.mwply = NULL;
+-    Mem_free(m_ap_obj.mwsfd_wkadr);
++    if (m_ap_obj.mwsfd_wkadr) Mem_free(m_ap_obj.mwsfd_wkadr); /* port (patch 0327): none */
+     if (m_scn_ctrl.tex.ybuf != NULL) {
+         Mem_free(m_scn_ctrl.tex.ybuf);
+         Mem_free(m_scn_ctrl.tex.cbuf);
+@@ -682,5 +682,47 @@
+     } else {
+         m_be_flag &= ~4;
+     }
+-    mwPlyPause(m_ap_obj.mwply, sw);
++    if (m_ap_obj.mwply) mwPlyPause(m_ap_obj.mwply, sw); /* port (patch 0327) */
++}
++
++/* port (patch 0327): the movie through the 3DS's H.264 decoder (runtime/re4_movie_hw.h). The renderer shows its frame
++   where a GX texture names the buffer given here (its texels never read); the quad as the CRI frame's (512 x the
++   movie's height, cSofdec::drawQuad), one stage GX_REPLACE instead of the YUV -> RGB ones. */
++static void re4MvdTex(TexObj* tex, int h)
++{
++    if (tex->ybuf != NULL) {
++        return;
++    }
++    tex->width = 512;
++    tex->height = h;
++    tex->ybufsiz = GXGetTexBufferSize(256, 256, 4, 0, 0); /* GX_TF_RGB565 */
++    tex->cbufsiz = 32;
++    tex->ybuf = (u8*) MEM_ALLOC(tex->ybufsiz, 1, 13);
++    tex->cbuf = (u8*) MEM_ALLOC(tex->cbufsiz, 1, 13);
++    if (tex->ybuf == NULL || tex->cbuf == NULL) {
++        OSReport("can't allocate tex buf.\n");
++        if (tex->ybuf != NULL) {
++            Mem_free(tex->ybuf);
++        }
++        if (tex->cbuf != NULL) {
++            Mem_free(tex->cbuf);
++        }
++        tex->ybuf = NULL;
++        tex->cbuf = NULL;
++        return;
++    }
++    memset(tex->ybuf, 0, tex->ybufsiz);
++    DCFlushRange(tex->ybuf, tex->ybufsiz);
++    GXInitTexObj(&tex->ytobj, tex->ybuf, 256, 256, 4, 0, 0, 0); /* RGB565, clamped */
++    tex->ctobj = tex->ytobj;
++    re4_movie_hw_mark(tex->ybuf);
++}
++
++static void re4MvdTev()
++{
++    GXSetNumTexGens(1);
++    GXSetNumTevStages(1);
++    GXSetTevOrder(0, 0, 0, 0xFF);
++    GXSetTevOp(0, 3); /* GX_REPLACE */
++    GXSetTevSwapMode(0, 0, 0);
+ }

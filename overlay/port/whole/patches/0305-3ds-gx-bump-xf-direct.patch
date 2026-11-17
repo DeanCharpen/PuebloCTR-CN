@@ -1,0 +1,69 @@
+# The 3DS port, stage 3.3c (docs 09-stage3-gx.md of the port research): the last register writes of
+# the GX library that went as bytes after patch 0153 go straight into the GX decoder's state too:
+# the BP writes of GXBump.c (its own GX_WRITE_SOME_REG5: GXSetTevDirect per TEV stage, ~760 a frame
+# of r100), the XF blocks of the projection and the viewport and GX_WRITE_XF_REG_F_ (GXTransform.c,
+# ~280). On the 3DS only. A port patch.
+--- a/src/lib/GXBump.c
++++ b/src/lib/GXBump.c
+@@ -18,6 +18,12 @@
+ } while (0)
+ #endif
+ 
++#if defined(__3DS__)
++// port: straight into the decoder, as GX_WRITE_RAS_REG (patch 0153, __gx.h)
++#undef GX_WRITE_SOME_REG5
++#define GX_WRITE_SOME_REG5(a, b) re4_gx_put_bp((u32)(b))
++#endif
++
+ void GXSetTevIndirect(GXTevStageID tev_stage, GXIndTexStageID ind_stage, GXIndTexFormat format, GXIndTexBiasSel bias_sel, GXIndTexMtxID matrix_sel, GXIndTexWrap wrap_s, GXIndTexWrap wrap_t, GXBool add_prev, GXBool utc_lod, GXIndTexAlphaSel alpha_sel) {
+     u32 reg;
+ 
+--- a/src/lib/GXTransform.c
++++ b/src/lib/GXTransform.c
+@@ -53,6 +53,15 @@
+ 
+ void __GXSetProjection(void) {
+     u32 reg = 0x00061020;
++#if defined(__3DS__)
++    {  // port: the 7 words straight into the decoder (patch 0153, __gx.h)
++        u32 w[7];
++        __builtin_memcpy(w, __GXData->projMtx, 6 * sizeof(f32));
++        w[6] = __GXData->projType;
++        re4_gx_put_xf(reg, w);
++        return;
++    }
++#endif
+     GX_WRITE_U8(0x10);
+     GX_WRITE_U32(reg);
+ #if DEBUG
+@@ -406,6 +415,13 @@
+     oz = zmax + __GXData->zOffset;
+ 
+     reg = 0x5101A;
++#if defined(__3DS__)
++    {  // port: the 6 words straight into the decoder (patch 0153, __gx.h)
++        f32 w[6] = {sx, sy, sz, ox, oy, oz};
++        re4_gx_put_xf(reg, w);
++        return;
++    }
++#endif
+     GX_WRITE_U8(0x10);
+     GX_WRITE_U32(reg);
+     GX_WRITE_XF_REG_F(26, sx);
+@@ -464,6 +480,16 @@
+     } \
+ } while (0)
+ 
++#if defined(__3DS__)
++// port: straight into the decoder (patch 0153, __gx.h)
++#undef GX_WRITE_XF_REG_F_
++#define GX_WRITE_XF_REG_F_(addr, value) \
++do { \
++    f32 xfData = (value); \
++    re4_gx_put_xf(0x1000 + (addr), &xfData); \
++} while (0)
++#endif
++
+ void GXSetZScaleOffset(f32 scale, f32 offset) {
+     f32 sz;
+     f32 oz;

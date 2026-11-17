@@ -1,0 +1,57 @@
+# The 3DS port, stage 3.6: commonModelTrans leaves out a model info drawn from the model file's own
+# positions (no skinning: the matrix and the arrays vtxOrig / nrmOrig) outside the shadow pass when the box
+# of all its parts, through the position matrix and the projection, is wholly outside the view, right after
+# its position matrix is made (before the inverse and the GX loads), and, when the box is across the view's
+# edge, each part whose own box is (before shaderSetup and the part's GX calls): port/whole/runtime/
+# part_cull.cpp re4_info_cull, re4_part_out; RE4_PARTCULL. The game itself culls only whole models, by a
+# sphere. The insertions share lines already there, so the #line numbers after them stay. A port patch.
+diff -ruN a/src/game/trans.cpp b/src/game/trans.cpp
+--- a/src/game/trans.cpp	2026-11-03 18:17:24.492840659 +0900
++++ b/src/game/trans.cpp	2026-11-03 18:17:24.619040989 +0900
+@@ -47,6 +47,9 @@
+ #define RE4_GX_HINT(h) ((void) 0)
+ #endif
+ 
++// The port's culling of model infos and parts outside the view (re4_part_cull.h, runtime/part_cull.cpp).
++#include "re4_part_cull.h"
++
+ #line 1 "D:/Bio4/Prog/trans.cpp"
+ 
+ 
+@@ -1051,7 +1054,7 @@
+     Mtx mv;
+     GxWork* gx = GXWORK();
+     int efbDone;
+-    int matSet;
++    int matSet; int re4Own = 0; int re4Cull = 0;
+ 
+     g_pShdMng = 0;
+     if (StaFlagChk(pG, STA_USE_SHADOW_LIGHT) && (m->be_flag & 0x02000000) && !DpfFlagChk(pG, DPF_CAST_SHADOW) &&
+@@ -1129,14 +1132,14 @@
+         Mtx nrm;
+         Mtx pm;
+         if (m->be_flag & 0x4000) {
+-            PSMTXConcat(m->mat, info->mat, pm);
++            PSMTXConcat(m->mat, info->mat, pm); re4Own = 1;
+         } else if (d->weight_palette_num <= 1 && d->weight_ext_num <= 0xFF && !(info->be_flag & 2) && d->nParts == 1) {
+-            PSMTXConcat(m->getPartsPtr(d->pHead->partsNo)->mat, info->mat, pm);
++            PSMTXConcat(m->getPartsPtr(d->pHead->partsNo)->mat, info->mat, pm); re4Own = 1;
+         } else {
+-            PSMTXConcat(m->pList->mat, info->mat, pm);
++            PSMTXConcat(m->pList->mat, info->mat, pm); re4Own = 0;
+         }
+         mat0 = m->mat;
+-        PSMTXConcat(viewMat, pm, mv);
++        PSMTXConcat(viewMat, pm, mv); re4Cull = re4Own && !(flag & 1) ? re4InfoCulled(d, mv) : 0; if (re4Cull == 1) { info = info->pList; continue; }
+         PSMTXInverse(mv, inv);
+         PSMTXTranspose(inv, nrm);
+         GXLoadPosMtxImm(mv, 0);
+@@ -1247,7 +1250,7 @@
+         }
+         for (i = 0; i < nParts; i++) {
+             u8* p;
+-            shaderSetup(m, info, part, mv);
++            if (re4Cull == 2 && re4_part_out(i)) { part = (cPolyHeader*) ((u8*) part + 0x20 + part->buff_size); continue; } shaderSetup(m, info, part, mv);
+             GXSetBlendMode(bl[info->blend_mode][0], bl[info->blend_mode][1], bl[info->blend_mode][2], bl[info->blend_mode][3]);
+             if (flag & 1) {
+                 GXSetAlphaCompare(7, 0, 1, 7, 0);

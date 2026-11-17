@@ -1,0 +1,37 @@
+# The 3DS port, stage 3.3c (docs 09-stage3-gx.md of the port research): as patch 0153, the light
+# loads (GXLoadLightObjImm) and the display list calls (GXCallDisplayList) go straight into the GX
+# decoder (runtime/gx_fifo.cpp re4_gx_put_xf, re4_gx_put_call) instead of as FIFO bytes; while a
+# display list is recorded or a command is half written, the bytes as before. On the 3DS only.
+# A port patch.
+--- a/src/lib/GXLight.c
++++ b/src/lib/GXLight.c
+@@ -385,6 +385,16 @@
+     idx &= 7;
+ 
+     addr = idx * 0x10 + 0x600;
++#if defined(__3DS__)
++    {  // port: the light's 16 words straight into the decoder (patch 0153, __gx.h)
++        u32 w[16];
++        __builtin_memcpy(w, obj, sizeof(w));
++        w[0] = w[1] = w[2] = 0;
++        re4_gx_put_xf(addr | 0xF0000, w);
++        __GXData->bpSentNot = 1;
++        return;
++    }
++#endif
+     GX_WRITE_U8(0x10);
+     GX_WRITE_U32(addr | 0xF0000);
+ 
+--- a/src/lib/GXDisplayList.c
++++ b/src/lib/GXDisplayList.c
+@@ -94,6 +94,10 @@
+         __GXSendFlushPrim();
+     }
+ 
++#if defined(__3DS__)
++    re4_gx_put_call(re4_gx_physical(list), nbytes);  // port: straight into the decoder (patch 0154)
++    return;
++#endif
+     GX_WRITE_U8(GX_CMD_CALL_DL);
+     GX_WRITE_U32(re4_gx_physical(list)); /* port: patch 0151, the 3DS layout */
+     GX_WRITE_U32(nbytes);

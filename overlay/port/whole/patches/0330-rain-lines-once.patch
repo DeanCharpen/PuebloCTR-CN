@@ -1,0 +1,17 @@
+# The rain's lines (Filter06Render): one GXBegin(GX_LINES) for all the particles, not one a particle - the same segments
+# (each pair of vertices a line), one draw instead of ~1600 on the 3DS (port/whole/3ds/gx_3ds.cpp drawLines). The same lines.
+diff -ruN a/src/game/filter06.cpp b/src/game/filter06.cpp
+--- a/src/game/filter06.cpp	2026-11-09 11:33:11.211762645 +0900
++++ b/src/game/filter06.cpp	2026-11-09 11:33:12.984217295 +0900
+@@ -284,9 +284,9 @@
+     GXSetVtxAttrFmt(0, 0xB, 1, 5, 0);
+     GXEnableTexOffsets(0, 0, 1);
+     p = flt06.p;
+-    scale = flt06.scale;
++    scale = flt06.scale; GXBegin(0xA8, 0, (u16) (flt06.num * 2));  /* port: one GXBegin for all the lines (2 vertices a segment) */
+     for (i = 0; i < flt06.num; i++, p++) {
+-        GXBegin(0xA8, 0, 2);
++        /* port: GXBegin(0xA8, 0, 2) once above for all the particles: one draw, not one a particle */
+         GXPosition3f32(p->m_Pos.x, p->m_Pos.y, p->m_Pos.z);
+         GXColor4u8(flt06.cur[0] >> 2, flt06.cur[1] >> 2, flt06.cur[2] >> 2, p->m_Alpha >> 2);
+         GXPosition3f32(p->m_Spd.x * scale + p->m_Pos.x, p->m_Spd.y * scale + p->m_Pos.y, p->m_Spd.z * scale + p->m_Pos.z);

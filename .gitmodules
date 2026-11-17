@@ -1,0 +1,3 @@
+[submodule "external/CubeEvil4"]
+	path = external/CubeEvil4
+	url = https://github.com/Andiweli/CubeEvil4-Android.git

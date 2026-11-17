@@ -1,0 +1,183 @@
+; The vertex shader of the 3DS renderer (gx_3ds.cpp): the GX position matrix the vertex names (its
+; XF row; the draw's default when the vertex has none), then the GX projection turned for the 3DS
+; screen. The colour channel 0 as XF lights it (stage 3.9): material = colour * matv + matc, light =
+; colour * ambv + ambc, the colour the vertex's COLOR0 (or a fixed 255), 0..255. A lit draw (lit) adds
+; its lights, in slots one after another (stage 3.8): the far ones first (nfar: short, no distance
+; attenuation, far off: a direction and a colour from the CPU), the short way (nbrief: a1 = a2 = k1 = 0,
+; max(0, a0) in the colour; no attenuation the same), then the whole (nwhole: diffuse clamped,
+; attenuated by the angle to its direction and its distance), the light clamped to 0..1; the result
+; material * light. The normal (lit only) goes through the position matrix's rows and is normalised
+; (XF's normal matrix is its inverse transpose: the same up to scale in r100). The texture coordinate
+; of each unit as XF generates it: its source (a vertex coordinate, the position or the normal) through
+; its texture matrix (rows s and t set per unit by gx_3ds.cpp; no projection); over the source's w only
+; with tdiv (the packed normal's K: gx_decode.cpp packNormal; else w is 1); units 1 and 2 only where
+; read (tu1, tu2). Each output written whole on every path: the tries with only .x and .y of the
+; coordinates written stopped the console whole at the first draws (01.11.2026). 96 of the 96 float
+; uniforms.
+.fvec rows[48]          ; XF memory 0x000-0x0BF: the position matrices, a row each
+.fvec proj[4]           ; GX projection, tilted (x' = y, y' = -x)
+.fvec chan[4]           ; matv, matc, ambv, ambc (1/255 included)
+.fvec tmtx[6]           ; per unit: rows s and t of its texture matrix
+.fvec lights[32]        ; per slot: colour; position, k0; direction, k1; a0 a1 a2, k2 (far: colour; direction)
+.fvec k                 ; 1, 0, 1e-12, 0 (gx_3ds.cpp: a .constf took a register inside lights[], 01.11.2026)
+.ivec nfar              ; the far lights: count - 1, first slot * 4, 4
+.ivec nbrief            ; the short lights: count - 1, first slot * 4, 4
+.ivec nwhole            ; the whole ones
+.bool lit
+.bool far
+.bool brief
+.bool whole
+.bool tdiv
+.bool tu1
+.bool tu2
+.bool tw0               ; unit 0 projective (the water's copy, stage 5.4): texcoord0w the position's w
+.bool farpos            ; (5.5) the far lights from each vertex: their slot holds the position (RE4_3DS_FARPOS)
+
+.out outpos position
+.out outclr color
+.out outtc0 texcoord0
+.out outtc1 texcoord1
+.out outtc2 texcoord2
+.out outtc0w texcoord0w
+
+.alias inpos v0         ; position, 3 floats
+.alias inclr v1         ; COLOR0, 4 unsigned bytes
+.alias inmtx v2         ; x: XF row of the position matrix
+.alias intc0 v3         ; texture coordinates of units 0..2, 2 floats each
+.alias intc1 v4
+.alias intc2 v5
+.alias innrm v6         ; normal: 3 floats or 4 signed bytes, any length
+
+.proc main
+	mova a0.x, inmtx.x
+	mov r1.xyz, inpos
+	mov r1.w, k.xxxx
+	dp4 r0.x, rows[a0.x+0], r1
+	dp4 r0.y, rows[a0.x+1], r1
+	dp4 r0.z, rows[a0.x+2], r1
+	mov r0.w, k.xxxx
+	dp4 outpos.x, proj[0], r0
+	dp4 outpos.y, proj[1], r0
+	dp4 outpos.z, proj[2], r0
+	dp4 outpos.w, proj[3], r0
+	mul r9, chan[0], inclr          ; material
+	add r9, chan[1], r9
+	mul r10, chan[2], inclr         ; light: the ambient
+	add r10, chan[3], r10
+	ifu lit
+		dp3 r3.x, rows[a0.x+0], innrm    ; the normal in view space
+		dp3 r3.y, rows[a0.x+1], innrm
+		dp3 r3.z, rows[a0.x+2], innrm
+		dp3 r3.w, r3, r3
+		max r3.w, k.zzzz, r3.wwww
+		rsq r3.w, r3.wwww
+		mul r3.xyz, r3, r3.wwww
+		ifu far
+			ifu farpos
+				for nfar
+					add r4.xyz, lights[aL+1], -r0      ; (5.5) to the light from this vertex: the sky and
+					dp3 r4.w, r4, r4                   ; what lies beyond the light lit from the right side
+					rsq r5.x, r4.wwww
+					dp3 r5.y, r3, r4
+					mul r5.y, r5.yyyy, r5.xxxx         ; N.L
+					max r5.y, k.yyyy, r5.yyyy
+					mad r10.xyz, r5.yyyy, lights[aL], r10
+				.end
+			.else
+				for nfar
+					dp3 r5.y, lights[aL+1], r3         ; N.L, L the direction to the light
+					max r5.y, k.yyyy, r5.yyyy
+					mad r10.xyz, r5.yyyy, lights[aL], r10
+				.end
+			.end
+		.end
+		ifu brief
+			for nbrief
+				add r4.xyz, lights[aL+1], -r0      ; to the light
+				dp3 r4.w, r4, r4                   ; d^2
+				rsq r5.x, r4.wwww
+				dp3 r5.y, r3, r4
+				mul r5.y, r5.yyyy, r5.xxxx         ; N.L
+				max r5.y, k.yyyy, r5.yyyy
+				mul r5.z, lights[aL+3].wwww, r4.wwww
+				add r5.z, lights[aL+1].wwww, r5.zzzz
+				rcp r5.z, r5.zzzz                  ; 1 / (k0 + k2 d^2)
+				mul r5.y, r5.yyyy, r5.zzzz
+				mad r10.xyz, r5.yyyy, lights[aL], r10  ; (the colour times max(0, a0))
+			.end
+		.end
+		ifu whole
+			for nwhole
+				add r4.xyz, lights[aL+1], -r0      ; to the light
+				dp3 r4.w, r4, r4                   ; d^2
+				rsq r5.x, r4.wwww
+				mul r4.xyz, r4, r5.xxxx            ; the direction to the light
+				mul r5.y, r4.wwww, r5.xxxx         ; d
+				dp3 r5.z, lights[aL+2], r4         ; cos to the light's direction
+				max r5.z, k.yyyy, r5.zzzz
+				mov r6, lights[aL+3]               ; a0 a1 a2 k2
+				mov r7, lights[aL+2]               ; k1
+				mov r8, lights[aL+1]               ; k0
+				mad r2.x, r5.zzzz, r6.zzzz, r6.yyyy
+				mad r2.x, r5.zzzz, r2.xxxx, r6.xxxx
+				max r2.x, k.yyyy, r2.xxxx          ; max(0, a0 + a1 cos + a2 cos^2)
+				mad r2.y, r5.yyyy, r6.wwww, r7.wwww
+				mad r2.y, r5.yyyy, r2.yyyy, r8.wwww
+				rcp r2.y, r2.yyyy                  ; 1 / (k0 + k1 d + k2 d^2)
+				dp3 r2.z, r3, r4
+				max r2.z, k.yyyy, r2.zzzz          ; max(0, N.L)
+				mul r2.x, r2.xxxx, r2.yyyy
+				mul r2.x, r2.xxxx, r2.zzzz
+				mad r10.xyz, r2.xxxx, lights[aL], r10
+			.end
+		.end
+		max r10, k.yyyy, r10
+		min r10, k.xxxx, r10
+	.end
+	mul outclr, r9, r10
+	ifu tdiv
+		rcp r3.x, intc0.wwww
+		dp4 r2.x, tmtx[0], intc0
+		dp4 r2.y, tmtx[1], intc0
+		mul r2.xy, r2, r3.xxxx
+		mov r2.zw, k.yyyy
+		mov outtc0, r2
+		rcp r3.x, intc1.wwww
+		dp4 r2.x, tmtx[2], intc1
+		dp4 r2.y, tmtx[3], intc1
+		mul r2.xy, r2, r3.xxxx
+		mov outtc1, r2
+		rcp r3.x, intc2.wwww
+		dp4 r2.x, tmtx[4], intc2
+		dp4 r2.y, tmtx[5], intc2
+		mul r2.xy, r2, r3.xxxx
+		mov outtc2, r2
+		mov outtc0w, k.xxxx
+	.else
+		dp4 r2.x, tmtx[0], intc0
+		dp4 r2.y, tmtx[1], intc0
+		mov r2.zw, k.yyyy
+		mov outtc0, r2
+		ifu tw0
+			dp4 r3.x, proj[3], r0
+			mov outtc0w, r3.xxxx
+		.else
+			mov outtc0w, k.xxxx
+		.end
+		ifu tu1
+			dp4 r2.x, tmtx[2], intc1
+			dp4 r2.y, tmtx[3], intc1
+			mov outtc1, r2
+		.else
+			mov outtc1, k.yyyy
+		.end
+		ifu tu2
+			dp4 r2.x, tmtx[4], intc2
+			dp4 r2.y, tmtx[5], intc2
+			mov outtc2, r2
+		.else
+			mov outtc2, k.yyyy
+		.end
+	.end
+	end
+.end

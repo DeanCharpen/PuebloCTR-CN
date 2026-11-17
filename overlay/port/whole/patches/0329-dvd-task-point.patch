@@ -1,0 +1,21 @@
+# The hang r120 -> r100 with the room loads in frames (stage 7.1b, 2026-11-08): the background task reading a file
+# (TASK_ISR) is suspended by the retrace only at the top of a turn of this loop, after its step (the port holds the
+# switch while its DVDReadAsyncPrio reads; runtime/dvd.cpp re4_dvd_task_point, os_thread.cpp re4_os_hold_switch):
+# a blocking read of the main thread (cDvd::blockRead) steps the running request while its piece bit 0x20 is set,
+# and that loop calls nothing of the port - with the read's rest on the suspended task's stack it never ended.
+--- a/src/game/dvd.cpp
++++ b/src/game/dvd.cpp
+@@ -1243,11 +1243,13 @@
+
+ extern "C" int re4_dvd_boot_fast(void); /* port: runtime/dvd.cpp */
+ extern "C" void re4_dvd_read_done(const char* name); /* port: runtime/dvd.cpp */
++extern "C" void re4_dvd_task_point(void); /* port: runtime/dvd.cpp (stage 7.1b) */
+
+ // Steps request `q` until it is done, running the disc error check when the read fails.
+ void cDvd::readProcMain(cDvdQueue* pQueue)
+ {
+     while (pQueue->Read() == 1) {
++        re4_dvd_task_point(); /* port: a suspension held while the step read happens here, the step over */
+         if (!pQueue->CkFlag(0x40000000)) {
+             /* port: at the start (until title.dat) the next step at once while nothing is in flight */
+             if (!pQueue->CkFlag(0x100) && !(!pQueue->CkFlag(0x03000000) && re4_dvd_boot_fast())) {

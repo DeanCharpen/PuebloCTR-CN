@@ -1,0 +1,157 @@
+# The 3DS port, stage 3.4b: hooks for runtime/dsp.cpp's DSP lists behind the game (RE4_DSP_BEHIND): the voices'
+# sync flags and depops go to the mixer, which keeps the sample-dependent state and runs the aux effects itself;
+# the game changes the effects and aux callbacks only after the mixer is done with what it holds. Without
+# RE4_DSP_BEHIND the hooks do nothing. A port patch.
+diff -ruN a/src/game/snd.cpp b/src/game/snd.cpp
+--- a/src/game/snd.cpp	2026-11-04 00:20:24.885552760 +0900
++++ b/src/game/snd.cpp	2026-11-04 00:20:25.036149566 +0900
+@@ -2554,11 +2554,15 @@
+ 
+ // Applies the room's reverb parameters (STB dpl2 for DPL2, stereo for the HI reverb) to the
+ // driver.
++extern "C" void re4_dsp_drain(void);  // port (stage 3.4b)
++
+ void SndSetReverb()
+ {
+     SND_EFX* w = &Snd_efx_work[0];
+     REVERB_INFO* p;
+ 
++    re4_dsp_drain();  // port: the DSP's lists behind are done with the effects (runtime/dsp.cpp)
++
+     if (pSys->SndMode == 2) {
+         p = &pSnd->hdr->dpl2;
+         w->rev_dpl2.tempDisableFX = 0;
+diff -ruN a/src/game/snd_efx.cpp b/src/game/snd_efx.cpp
+--- a/src/game/snd_efx.cpp	2026-11-04 00:20:23.604993936 +0900
++++ b/src/game/snd_efx.cpp	2026-11-04 00:20:25.036036109 +0900
+@@ -3,6 +3,8 @@
+ // stops them, the game sets the parameters in Snd_efx_work[].fx first (snd.cpp SndSetReverb).
+ #include "snd_drv.h"
+ 
++extern "C" void re4_dsp_drain(void);  // port (stage 3.4b)
++
+ // Clears both effect works (aux 0 / 1, no effect).
+ void Snd_efx_work_clear(void)
+ {
+@@ -30,6 +32,8 @@
+     SND_EFX* efx;
+     int ret;
+ 
++    re4_dsp_drain();  // port: the DSP's lists behind are done with the effects (runtime/dsp.cpp)
++
+     efx = &Snd_efx_work[no];
+     if (type == 0) {
+         efx_req_off(efx);
+diff -ruN a/src/lib/AXAux.c b/src/lib/AXAux.c
+--- a/src/lib/AXAux.c	2026-11-04 00:20:23.667755858 +0900
++++ b/src/lib/AXAux.c	2026-11-04 00:20:25.035727822 +0900
+@@ -3,6 +3,12 @@
+ 
+ #include "__ax.h"
+ 
++/* port (stage 3.4b): runtime/dsp.cpp, the DSP's lists behind the game (RE4_DSP_BEHIND) */
++void re4_dsp_synced(u32 index, u32 sync);
++void re4_dsp_depop(const AXPB* pb);
++void re4_dsp_drain(void);
++int re4_dsp_behind(void);
++
+ static s32 __AXBufferAuxA[3][480] ATTRIBUTE_ALIGN(32);
+ static s32 __AXBufferAuxB[3][480] ATTRIBUTE_ALIGN(32);
+ 
+@@ -109,7 +115,7 @@
+     __AXAuxBDspWrite = &__AXBufferAuxB[__AXAuxDspWritePosition][0];
+     __AXAuxBDspRead = &__AXBufferAuxB[__AXAuxDspReadPosition][0];
+ 
+-    if (__AXCallbackAuxA) {
++    if (__AXCallbackAuxA && !re4_dsp_behind()) {
+         if (__AXClMode == 2) {
+             AX_AUX_DATA_DPL2 auxData;
+             auxData.l = &__AXBufferAuxA[__AXAuxCpuReadWritePosition][0];
+@@ -132,7 +138,7 @@
+         }        
+     }
+ 
+-    if (__AXCallbackAuxB && __AXClMode != 2) {
++    if (__AXCallbackAuxB && __AXClMode != 2 && !re4_dsp_behind()) {
+         AX_AUX_DATA auxData;
+         auxData.l = &__AXBufferAuxB[__AXAuxCpuReadWritePosition][0];
+         auxData.r = &__AXBufferAuxB[__AXAuxCpuReadWritePosition][160];
+@@ -157,11 +163,30 @@
+ }
+ 
+ void AXRegisterAuxACallback(void (*callback)(void*, void*), void* context) {
++    re4_dsp_drain();
+     __AXCallbackAuxA = callback;
+     __AXContextAuxA = context;    
+ }
+ 
+ void AXRegisterAuxBCallback(void (*callback)(void*, void*), void* context) {
++    re4_dsp_drain();
+     __AXCallbackAuxB = callback;
+     __AXContextAuxB = context;    
+ }
++
++/* port (stage 3.4b): runtime/dsp.cpp's lists behind the game (RE4_DSP_BEHIND) run the aux callbacks themselves,
++   on the buffers of the CPU's position of the frame (__AXProcessAux's), with the callbacks registered now (the game
++   changes them only after re4_dsp_drain). */
++u32 re4_ax_aux_position(void) {
++    return __AXAuxCpuReadWritePosition;
++}
++
++void re4_ax_aux(u32 position, void (**callbackA)(void*, void*), void** contextA, void (**callbackB)(void*, void*),
++                void** contextB, s32** bufferA, s32** bufferB) {
++    *callbackA = __AXCallbackAuxA;
++    *contextA = __AXContextAuxA;
++    *callbackB = __AXCallbackAuxB;
++    *contextB = __AXContextAuxB;
++    *bufferA = &__AXBufferAuxA[position % 3][0];
++    *bufferB = &__AXBufferAuxB[position % 3][0];
++}
+diff -ruN a/src/lib/AXSPB.c b/src/lib/AXSPB.c
+--- a/src/lib/AXSPB.c	2026-11-04 00:20:23.669002717 +0900
++++ b/src/lib/AXSPB.c	2026-11-04 00:20:25.035634031 +0900
+@@ -3,6 +3,12 @@
+ 
+ #include "__ax.h"
+ 
++/* port (stage 3.4b): runtime/dsp.cpp, the DSP's lists behind the game (RE4_DSP_BEHIND) */
++void re4_dsp_synced(u32 index, u32 sync);
++void re4_dsp_depop(const AXPB* pb);
++void re4_dsp_drain(void);
++int re4_dsp_behind(void);
++
+ static AXSPB __AXStudio ATTRIBUTE_ALIGN(32);
+ 
+ static s32 __AXSpbAL;
+@@ -79,6 +85,7 @@
+ }
+ 
+ void __AXDepopVoice(AXPB* p) {
++    re4_dsp_depop(p);
+     __AXSpbAL += p->dpop.aL;
+     __AXSpbAAL += p->dpop.aAuxAL;
+     __AXSpbABL += p->dpop.aAuxBL;
+diff -ruN a/src/lib/AXVPB.c b/src/lib/AXVPB.c
+--- a/src/lib/AXVPB.c	2026-11-04 00:20:23.669716333 +0900
++++ b/src/lib/AXVPB.c	2026-11-04 00:20:25.035469450 +0900
+@@ -4,6 +4,12 @@
+ 
+ #include "__ax.h"
+ 
++/* port (stage 3.4b): runtime/dsp.cpp, the DSP's lists behind the game (RE4_DSP_BEHIND) */
++void re4_dsp_synced(u32 index, u32 sync);
++void re4_dsp_depop(const AXPB* pb);
++void re4_dsp_drain(void);
++int re4_dsp_behind(void);
++
+ static u32 __AXSrcCycles[5] = {
+     0x00000DF8,
+     0x00000F78,
+@@ -59,6 +65,7 @@
+     ppbDsp = &__AXPB[pvpb->index];
+     ppbUser = &pvpb->pb;
+     sync = pvpb->sync;
++    re4_dsp_synced(pvpb->index, sync);
+     if (sync == 0) {
+         ppbUser->state = ppbDsp->state;
+         ppbUser->ve.currentVolume = ppbDsp->ve.currentVolume;

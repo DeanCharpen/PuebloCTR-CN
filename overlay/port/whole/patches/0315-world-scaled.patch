@@ -1,0 +1,69 @@
+# The 3DS port, stage 3.6: partsWorldCalc's non-uniform parent scale (85 % of the village's parts) works out
+# the rotation part only, with C_MTXConcat's sums in its order, instead of three full PSMTXConcat with scale
+# matrices: TransMatrix replaces the translation column anyway. Same results. A port patch.
+diff -ruN a/src/game/model.cpp b/src/game/model.cpp
+--- a/src/game/model.cpp	2026-11-03 21:01:48.077733432 +0900
++++ b/src/game/model.cpp	2026-11-03 21:01:48.228952018 +0900
+@@ -401,6 +401,41 @@
+     matUpdate();
+ }
+ 
++/* port: the rotation part of (pm * Scale(is)) * l * Scale(s), the three PSMTXConcat of partsWorldCalc's
++   non-uniform parent scale (85 % of the village's parts), with C_MTXConcat's sums in its order (mtx_ps.c).
++   partsWorldCalc replaces the translation column (TransMatrix) and no rotation entry reads it. A product
++   with a C_MTXScale matrix (its zeros +0) keeps a[i][j] * s[j] and adds zero terms: for a finite a,
++   (0 + a*0) + (x + a*0) is x + 0.0f, the same bits (a zero of either sign becomes +0 both ways). */
++static inline void worldScaled(MtxPtr pm, const Vec* is, MtxPtr l, const Vec* s, MtxPtr out)
++{
++    const f32 ix = is->x, iy = is->y, iz = is->z;
++    const f32 sx = s->x, sy = s->y, sz = s->z;
++    const f32 a00 = pm[0][0] * ix + 0.0f, a01 = pm[0][1] * iy + 0.0f, a02 = pm[0][2] * iz + 0.0f;
++    const f32 a10 = pm[1][0] * ix + 0.0f, a11 = pm[1][1] * iy + 0.0f, a12 = pm[1][2] * iz + 0.0f;
++    const f32 a20 = pm[2][0] * ix + 0.0f, a21 = pm[2][1] * iy + 0.0f, a22 = pm[2][2] * iz + 0.0f;
++    const f32 b00 = l[0][0], b01 = l[0][1], b02 = l[0][2];
++    const f32 b10 = l[1][0], b11 = l[1][1], b12 = l[1][2];
++    const f32 b20 = l[2][0], b21 = l[2][1], b22 = l[2][2];
++    const f32 m00 = 0 + a02 * b20 + ((a00 * b00) + (a01 * b10));
++    const f32 m01 = 0 + a02 * b21 + ((a00 * b01) + (a01 * b11));
++    const f32 m02 = 0 + a02 * b22 + ((a00 * b02) + (a01 * b12));
++    const f32 m10 = 0 + a12 * b20 + ((a10 * b00) + (a11 * b10));
++    const f32 m11 = 0 + a12 * b21 + ((a10 * b01) + (a11 * b11));
++    const f32 m12 = 0 + a12 * b22 + ((a10 * b02) + (a11 * b12));
++    const f32 m20 = 0 + a22 * b20 + ((a20 * b00) + (a21 * b10));
++    const f32 m21 = 0 + a22 * b21 + ((a20 * b01) + (a21 * b11));
++    const f32 m22 = 0 + a22 * b22 + ((a20 * b02) + (a21 * b12));
++    out[0][0] = m00 * sx + 0.0f;
++    out[0][1] = m01 * sy + 0.0f;
++    out[0][2] = m02 * sz + 0.0f;
++    out[1][0] = m10 * sx + 0.0f;
++    out[1][1] = m11 * sy + 0.0f;
++    out[1][2] = m12 * sz + 0.0f;
++    out[2][0] = m20 * sx + 0.0f;
++    out[2][1] = m21 * sy + 0.0f;
++    out[2][2] = m22 * sz + 0.0f;
++}
++
+ // Computes every parts' world matrix from its parent (parent mat * l_mat, with non-uniform parent
+ // scale removed and re-applied), applies pending addRot corrections (flag 0x40000000), stores the
+ // world position and the accumulated r_scale; parts with motParts flag 2 (IK-fixed) are skipped.
+@@ -409,7 +444,6 @@
+     cParts* p;
+     Vec tmp;
+     Vec sc;
+-    Mtx m1;
+     Mtx m2;
+ 
+     r_scale = scale;
+@@ -438,11 +472,7 @@
+             sc.x = (parent->r_scale.x != 0.0f) ? 1.0f / parent->r_scale.x : 0.0f;
+             sc.y = (parent->r_scale.y != 0.0f) ? 1.0f / parent->r_scale.y : 0.0f;
+             sc.z = (parent->r_scale.z != 0.0f) ? 1.0f / parent->r_scale.z : 0.0f;
+-            PSMTXScale(m1, sc.x, sc.y, sc.z);
+-            PSMTXConcat(parent->mat, m1, m1);
+-            PSMTXConcat(m1, p->l_mat, p->mat);
+-            PSMTXScale(m1, parent->r_scale.x, parent->r_scale.y, parent->r_scale.z);
+-            PSMTXConcat(p->mat, m1, p->mat);
++            worldScaled(parent->mat, &sc, p->l_mat, &parent->r_scale, p->mat); /* port: 3x3 only */
+         } else {
+             PSMTXConcat(m, p->l_mat, p->mat);
+         }

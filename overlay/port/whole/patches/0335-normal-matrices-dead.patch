@@ -1,0 +1,42 @@
+# Port patch 0335 (2026-11-10): with re4_gx_nrm_dead (the 3DS with
+# the GX thread: its renderer takes the normal through the position matrix's rows) commonModelTrans leaves out the
+# normal matrix (inverse, transpose, GXLoadNrmMtxImm) and updateMatrices computes only dst (one inverse; the indirect
+# matrix is not used there). Linux: re4_gx_nrm_dead 0, as before.
+diff -ruN a/src/game/trans.cpp b/src/game/trans.cpp
+--- a/src/game/trans.cpp	2026-11-10 16:30:42.077385965 +0900
++++ b/src/game/trans.cpp	2026-11-10 16:30:42.242890548 +0900
+@@ -1035,7 +1035,7 @@
+ 
+ // Draws every model info of `m` part by part, then the foot shadows. flag bit0 is the shadow /
+ // depth pass, which skips alpha.
+-void commonModelTrans(cModel* m, cModelInfo* info, Mtx viewMat, int flag)
++extern "C" int re4_gx_nrm_dead; void commonModelTrans(cModel* m, cModelInfo* info, Mtx viewMat, int flag)  /* port (patch 0335): re4_gx_nrm_dead */
+ {
+     /* PORT (patch 0096): a sixth row for blend_mode 5, what the GameCube reads behind the table: the
+        first four words of trans_lit.cpp's funcLightParam, the addresses of lightSetConstant,
+@@ -1140,10 +1140,10 @@
+         }
+         mat0 = m->mat;
+         PSMTXConcat(viewMat, pm, mv); re4Cull = re4Own && !(flag & 1) ? re4InfoCulled(d, mv) : 0; if (re4Cull == 1) { info = info->pList; continue; }
+-        PSMTXInverse(mv, inv);
+-        PSMTXTranspose(inv, nrm);
++        if (!re4_gx_nrm_dead) PSMTXInverse(mv, inv);  /* port (patch 0335): the normal matrix nobody reads on the 3DS */
++        if (!re4_gx_nrm_dead) PSMTXTranspose(inv, nrm);
+         GXLoadPosMtxImm(mv, 0);
+-        GXLoadNrmMtxImm(nrm, 0);
++        if (!re4_gx_nrm_dead) GXLoadNrmMtxImm(nrm, 0);
+         GXSetCurrentMtx(0);
+         tex = d->pTex;
+         u32 re4Vk = (d->flags & 0xA0000000) | d->shift; int re4Vs = re4_gx_vtx_same(re4Vk); if (!re4Vs) GXClearVtxDesc();  // port: the format kept
+@@ -2774,6 +2774,11 @@
+ 
+     PSMTXConcat(pG->Camera.v_mat, m, mv);
+     PSMTXInverse(mv, inv);
++    if (re4_gx_nrm_dead) {
++        /* port (patch 0335): dst only - the same as below (inv2 is inv); the indirect matrix is not used here */
++        PSMTXTranspose(inv, dst);
++        return;
++    }
+     PSMTXTranspose(inv, t);
+     PSMTXInverse(mv, inv2);
+     PSMTXTranspose(inv2, dst);

@@ -1,0 +1,42 @@
+# The 3DS port, the fight in r104 (bench8): cAtariInfo::getPos keeps RotVector(m_offset, ang) by the bits of
+# its six inputs (128 places by the body's address): EmAtCheck asks for every colliding character's position ~1200
+# times a frame, few of them turned since. low_RotMatrix depends on them alone: the same vector, bit for bit.
+# A port patch.
+diff -ruN a/src/game/atariInfo.cpp b/src/game/atariInfo.cpp
+--- a/src/game/atariInfo.cpp	2026-11-04 22:56:25.362225559 +0900
++++ b/src/game/atariInfo.cpp	2026-11-04 22:56:27.284341672 +0900
+@@ -110,12 +110,33 @@
+     }
+ }
+ 
++// port: RotVector(m_offset, ang) by the bits of its 6 inputs (bench8, the fight in r104: EmAtCheck asks for the
++// position of every colliding character ~1200 times a frame, few of them turned since); low_RotMatrix is a function
++// of them alone (SINF/COSF memo too), so a hit is the same vector, bit for bit. 128 places by the body's address.
++struct AtariRotMemo {
++    u32 key[6];  // m_offset, ang (bits)
++    Vec v;
++    int used;
++};
++static AtariRotMemo s_atariRot[128];
++
+ // World position of the body: the rotated offset added to the parts (or model) position.
+ void cAtariInfo::getPos(cModel* m, Vec* out)
+ {
+     Vec v;
++    u32 key[6];
++    AtariRotMemo* e = &s_atariRot[((u32) ((__UINTPTR_TYPE__) this >> 3) * 2654435761u) >> 25];
+ 
+-    RotVector(&m_offset, &m->ang, &v);
++    __builtin_memcpy(key, &m_offset, 12);
++    __builtin_memcpy(key + 3, &m->ang, 12);
++    if (e->used && __builtin_memcmp(e->key, key, 24) == 0) {
++        v = e->v;
++    } else {
++        RotVector(&m_offset, &m->ang, &v);
++        __builtin_memcpy(e->key, key, 24);
++        e->v = v;
++        e->used = 1;
++    }
+     if (m_parts_no != 0) {
+         PSVECAdd(&m->getPartsPtr(m_parts_no - 1)->world, &v, out);
+     } else {

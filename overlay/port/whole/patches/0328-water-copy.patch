@@ -1,0 +1,65 @@
+# The water (the refraction shader GetEfbTex, the water surfaces Espgen42/45): name the address of their copy of the frame (re4_gx_water_copy,
+# runtime/gx_decode.cpp) - the 3DS renderer makes no EFB copies but this one (port/whole/3ds/gx_3ds.cpp). The same lines.
+diff -ruN a/src/game/Espgen42.cpp b/src/game/Espgen42.cpp
+--- a/src/game/Espgen42.cpp	2026-11-07 13:21:31.452145930 +0900
++++ b/src/game/Espgen42.cpp	2026-11-07 13:21:31.725340744 +0900
+@@ -723,7 +723,7 @@
+ // ambient colours, position and normal matrices, the water texture (texId) with the bump map as
+ // an indirect stage plus `stages` extra TEV stages, then calls the pre-built display list of
+ // triangle strips; restores the TEV state afterwards.
+-void Espgen42_TransSub(cEspgen* pGen)
++extern "C" void re4_gx_water_copy(const void* dest); void Espgen42_TransSub(cEspgen* pGen)
+ {
+     GxStageWork* st;
+     ESPGEN45_WK* p;
+@@ -780,7 +780,7 @@
+         f32 ofs = 56.0f;
+         GXSetTexCopySrc(0, (u32) ofs, (u32) Screen.width, (u32) (Screen.height - ofs));
+         GXSetTexCopyDst((u32) Screen.width / 2, (u32) ((f32) ((u32) Screen.height / 2) - ofs), 6, 1);
+-        GXCopyTex(buf, 0);
++        re4_gx_water_copy(buf); GXCopyTex(buf, 0);  /* port: the 3DS renderer makes this one copy (gx_3ds.cpp) */
+         GXPixModeSync();
+         GXInvalidateTexAll();
+         {
+diff -ruN a/src/game/espgen45.cpp b/src/game/espgen45.cpp
+--- a/src/game/espgen45.cpp	2026-11-07 13:21:31.452529920 +0900
++++ b/src/game/espgen45.cpp	2026-11-07 13:21:31.725524031 +0900
+@@ -435,7 +435,7 @@
+ 
+ // Draws the water with a screen copy as the refraction texture, a bump indirect stage, the specular
+ // and optional mask textures, the far border quads unless flag bit 0, then the grid display list.
+-void Espgen45_TransSub(cEspgen* w)
++extern "C" void re4_gx_water_copy(const void* dest); void Espgen45_TransSub(cEspgen* w)
+ {
+     static f32 g45_mul = 15.0f;
+     static f32 g45_mul2 = 1.0f;
+@@ -506,7 +506,7 @@
+         f32 ofs = 56.0f;
+         GXSetTexCopySrc(0, (u32) ofs, (u32) Screen.width, (u32) (Screen.height - ofs));
+         GXSetTexCopyDst((u32) Screen.width / 2, (u32) ((f32) ((u32) Screen.height / 2) - ofs), 6, 1);
+-        GXCopyTex(buf, 0);
++        re4_gx_water_copy(buf); GXCopyTex(buf, 0);  /* port: the 3DS renderer makes this one copy (gx_3ds.cpp) */
+         GXPixModeSync();
+         GXInvalidateTexAll();
+         {
+diff -ruN a/src/game/trans.cpp b/src/game/trans.cpp
+--- a/src/game/trans.cpp	2026-11-07 13:21:31.489837399 +0900
++++ b/src/game/trans.cpp	2026-11-07 13:21:31.725075625 +0900
+@@ -323,7 +323,7 @@
+ int MakeWeightPaletteExt(cWeightExt* w, int n);
+ int MakeWeightPalette(cWeight* w, int n);
+ void updateMatrices(Mtx m, Mtx dst, cModel* model);
+-void RefractShaderSetup(cModel* m, cModelInfo* info, cPolyHeader* part, Mtx mv);
++void RefractShaderSetup(cModel* m, cModelInfo* info, cPolyHeader* part, Mtx mv); extern "C" void re4_gx_refract_copy(const void* dest);
+ 
+ // Binds model texture `id` to texture map `map`: from the GX work's texture objects (0..0xF7), or
+ // a render-to-texture manager's texture (0xF8..).
+@@ -3011,7 +3011,7 @@
+     ofs = 56.0f;
+     GXSetTexCopySrc(0, (u32) ofs, (u32) Screen.width, (u32) (Screen.height - ofs));
+     GXSetTexCopyDst((u32) Screen.width >> 1, (u16) ((f32) ((u32) Screen.height >> 1) - ofs), 6, 1);
+-    GXCopyTex(buf, 0);
++    re4_gx_refract_copy(buf); GXCopyTex(buf, 0);  /* port: the 3DS renderer makes this one copy (gx_3ds.cpp) */
+     GXPixModeSync();
+     GXInvalidateTexAll();
+     GXInitTexObj(&g_Get_tex_obj, buf, (u32) Screen.width >> 1, (u16) ((f32) ((u32) Screen.height >> 1) - ofs), 6, 0, 0, 0);

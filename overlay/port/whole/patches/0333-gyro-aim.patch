@@ -1,0 +1,107 @@
+# Port patch 0333 (2026-11-09): the console's gyro turns the aim on top of the stick - the gun aim (PlWepLockCtrl, with R), the scope (CameraScope) and the binoculars (CameraBinocular); radians a frame from runtime/pad.cpp re4_gyro_take (0 without a gyro, in a replay, a recording or a test script).
+diff -ruN a/src/game/cam_extra.cpp b/src/game/cam_extra.cpp
+--- a/src/game/cam_extra.cpp	2026-11-09 16:15:38.266972370 +0900
++++ b/src/game/cam_extra.cpp	2026-11-09 16:15:38.578314924 +0900
+@@ -307,6 +307,7 @@
+ 
+ // Per-frame scope view: the C-stick zooms, aiming turns the player, and a breathing sway is added
+ // while aiming.
++extern "C" int re4_gyro_take(float* yaw, float* pitch); /* port (patch 0333): runtime/pad.cpp */
+ void CameraScope::move()
+ {
+     static f32 ZOOM_LIMIT_0 = 9.0f;
+@@ -391,6 +392,22 @@
+             angle_x += add; // `+=`: the sum is tied to the load register, `ang` copied (`fmr f11,f0`)
+         }
+     }
++    /* port (patch 0333, stage 6.2f): the console's gyro on top of the stick (angle_x: plus is down) */
++    if (Key.on & 0x10) {
++        f32 gyroYaw;
++        f32 gyroPitch;
++        if (re4_gyro_take(&gyroYaw, &gyroPitch)) {
++            pPL->ang.y = LIMIT_ANGLE(pPL->ang.y + gain * gyroYaw);
++            add = -gain * gyroPitch;
++            ang = angle_x;
++            if (ang + add < angle_min) {
++                add = angle_min - ang;
++            } else if (ang + add > angle_max) {
++                add = angle_max - ang;
++            }
++            angle_x += add;
++        }
++    }
+     {
+         u8 c = sct--; // the old value in a byte local: `clrlwi r0,r9,24` + `addi r9,r9,255`
+         if (c == 0) {
+@@ -672,6 +689,32 @@
+         CameraTargetRot(this, 'x', add);
+         m_rad.x = m_rad.x + add;
+     }
++    /* port (patch 0333, stage 6.2f): the console's gyro on top of the stick, the stick's way */
++    {
++        f32 gyroYaw;
++        f32 gyroPitch;
++        if (re4_gyro_take(&gyroYaw, &gyroPitch)) {
++            Vec axis = {0.0f, 1.0f, 0.0f};
++            add = gain * gyroYaw;
++            ang = m_rad.y;
++            if (ang + add < m_rad_low.y) {
++                add = m_rad_low.y - ang;
++            } else if (ang + add > m_rad_up.y) {
++                add = m_rad_up.y - ang;
++            }
++            CameraRotAxisPosRad(this, &axis, &param.Campos, add);
++            m_rad.y = m_rad.y + add;
++            add = gain * gyroPitch;
++            ang = m_rad.x;
++            if (ang + add < m_rad_low.x) {
++                add = m_rad_low.x - ang;
++            } else if (ang + add > m_rad_up.x) {
++                add = m_rad_up.x - ang;
++            }
++            CameraTargetRot(this, 'x', add);
++            m_rad.x = m_rad.x + add;
++        }
++    }
+     if (m_flag != 0) {
+         m_campos = param.Campos;
+         m_target = param.Target;
+diff -ruN a/src/game/pl_wep.cpp b/src/game/pl_wep.cpp
+--- a/src/game/pl_wep.cpp	2026-11-09 16:15:36.849831426 +0900
++++ b/src/game/pl_wep.cpp	2026-11-09 16:15:38.578067970 +0900
+@@ -866,6 +866,7 @@
+ // m_Fwork0 within the weapon's limit `lim` (turning the body past it), with acceleration repCtr
+ // and per-weapon speeds; then the weapon sway (PlWepLockRand), debug auto-track, the three-way
+ // motion blend and the waist twist.
++extern "C" int re4_gyro_take(float* yaw, float* pitch); /* port (patch 0333): runtime/pad.cpp */
+ void PlWepLockCtrl(cModel* plm)
+ {
+     static f32 repCtr = 0.0f;
+@@ -1008,6 +1009,27 @@
+                 pl->ang.y -= spd * (f32) Joy[0].stickX * repCtr * PI / 10.0f / 200.0f / 20.0f;
+             }
+         }
++        /* port (patch 0333, stage 6.2f): the console's gyro on top of the stick, guns only */
++        {
++            f32 gyroYaw;
++            f32 gyroPitch;
++            if (joyKamae() && re4_gyro_take(&gyroYaw, &gyroPitch)) {
++                m3r += gyroPitch * (4.0f / PI);
++                m3r.limit(-1.0f, 1.0f);
++                d = pl->m_Fwork0 + gyroYaw;
++                if (d > lim) {
++                    pl->ang.y += d - lim;
++                    d = lim;
++                }
++                if (d < -lim * 0.8f) {
++                    pl->ang.y += d + lim * 0.8f;
++                    d = -lim * 0.8f;
++                }
++                pl->m_Fwork0 = d;
++                pl->ang.y = LIMIT_ANGLE(pl->ang.y);
++                moved = 1;
++            }
++        }
+     }
+ rand:
+     tmp = m3r;

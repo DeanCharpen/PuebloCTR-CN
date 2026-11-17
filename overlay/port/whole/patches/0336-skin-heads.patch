@@ -1,0 +1,92 @@
+# Port patch 0336 (2026-11-10): who skins a model (the jobs of 0324/0325)
+# calls re4_skin_head_fn after each info's vertices: the 3DS converts the heads of the display lists that read them
+# on that thread, mostly the game while it waits for the GX thread (gx_decode.cpp, RE4_3DS_HEADJOB). re4_skin_gen:
+# the jobs' generation; with the hook set the record after the jobs goes into the ring every frame (it names the
+# generation). Linux: the hook is NULL, as before.
+diff -ruN a/src/game/trans.cpp b/src/game/trans.cpp
+--- a/src/game/trans.cpp	2026-11-10 17:57:15.478271082 +0900
++++ b/src/game/trans.cpp	2026-11-10 17:57:15.645730247 +0900
+@@ -3110,7 +3110,7 @@
+ Re4SkinJob re4SkinJobs[kRe4SkinJobs];
+ Re4SkinPalTask re4SkinPals[kRe4SkinPals];
+ Re4SkinTask re4SkinTasks[kRe4SkinTasks];
+-alignas(32) Re4SkinScratch re4SkinScratch[2];  // 0 the GX thread, 1 the game
++alignas(32) Re4SkinScratch re4SkinScratch[3];  // 0 the GX thread, 1 the game, 2 the jobs' worker (patch 0336)
+ struct Re4SkinCursor {  // where a job stands
+     u32 job, pal, task, vtx;
+     int mats, made;  // the weight matrices, this palette made
+@@ -3126,7 +3126,7 @@
+ u32 re4SkinCount;         // jobs published (the game writes)
+ u32 re4SkinNext;          // the next job to take
+ u32 re4SkinDone;          // jobs finished
+-u32 re4SkinStat[3][2];    // by who (0 GX thread, 1 the game waiting, 2 the join): jobs, vertices
++u32 re4SkinStat[4][2];    // by who (0 GX thread, 1 the game waiting, 2 the join, 3 the worker): jobs, vertices
+ u32 re4SkinFrames, re4SkinPalCount, re4SkinDirect;
+ }  // namespace
+ 
+@@ -3135,6 +3135,12 @@
+ void (*re4_skin_finish_fn)(void);  // gx_thread_3ds.cpp: a record, the GX thread runs re4_skin_finish there
+ int (*re4_skin_game_help_fn)(void);  // gx_thread_3ds.cpp: may the game take a job while it waits (0 no)
+ int (*re4_skin_yield_fn)(void);  // gx_thread_3ds.cpp: records for the GX thread (it gives way between pieces)
++/* port (patch 0336): a model's vertices are skinned (posN positions of 6 bytes at pos, from src; nrmN normals at nrm,
++   nrmKind 1: 3 bytes each), by side (0 the GX thread's scratch, 1 the game's), in the jobs' generation gen: the 3DS
++   converts the heads of the display lists that read them there and then (gx_decode.cpp). NULL: nobody (Linux). */
++void (*re4_skin_head_fn)(int side, unsigned gen, const void* src, const void* pos, unsigned posN, const void* nrm,
++                         unsigned nrmN, int nrmKind);
++unsigned re4_skin_gen;  // the generation of the jobs being put (re4SkinEnd: the next)
+ int re4_skin_help(int who);
+ void re4_skin_finish(void);
+ void re4SkinJoin(void);            // main.cpp, after Render_done
+@@ -3192,6 +3198,11 @@
+                 c.vtx += k;
+             }
+         }
++        if (re4_skin_head_fn && p.tasks == 2 && !re4SkinTasks[p.task].kind) {  /* port (patch 0336) */
++            const Re4SkinTask& a = re4SkinTasks[p.task];
++            const Re4SkinTask& b = re4SkinTasks[p.task + 1];
++            re4_skin_head_fn((int) (&s - re4SkinScratch), re4_skin_gen, a.src, a.dst, a.n, b.dst, b.n, b.kind);
++        }
+     }
+     return 1;
+ }
+@@ -3341,7 +3352,7 @@
+         re4SkinGxOn = 1;
+         return re4SkinTake(0, yield);
+     }
+-    re4SkinRun(c, re4SkinScratch[1], false);
++    re4SkinRun(c, re4SkinScratch[who == 3 ? 2 : 1], false);  /* port (patch 0336): the worker's own */
+     re4SkinDoneJob(i, who);
+     return 1;
+ }
+@@ -3381,17 +3392,19 @@
+     __atomic_store_n(&re4SkinDone, 0, __ATOMIC_SEQ_CST);
+     re4SkinPalUsed = 0;
+     re4SkinTaskUsed = 0;
++    re4_skin_gen++;  /* port (patch 0336) */
+     if (re4SkinOn > 0 && ++re4SkinFrames == 300) {
+         double jobs = 0, vtx = 0;
+-        for (int w = 0; w < 3; w++) {
++        for (int w = 0; w < 4; w++) {
+             jobs += re4SkinStat[w][0];
+             vtx += re4SkinStat[w][1];
+         }
+         const double v = vtx > 0 ? vtx : 1;
+         re4_log("skin jobs (per frame, 300 frames): %.1f models, %.1f palettes, %.0f vertices; by vertices: GX thread "
+-                "%.0f%%, the game waiting %.0f%%, at the join %.0f%%; %.1f skinned at once",
++                "%.0f%%, the game waiting %.0f%%, at the join %.0f%%, the worker %.0f%%; %.1f skinned at once",
+                 jobs / 300, re4SkinPalCount / 300.0, vtx / 300, 100.0 * re4SkinStat[0][1] / v,
+-                100.0 * re4SkinStat[1][1] / v, 100.0 * re4SkinStat[2][1] / v, re4SkinDirect / 300.0);
++                100.0 * re4SkinStat[1][1] / v, 100.0 * re4SkinStat[2][1] / v, 100.0 * re4SkinStat[3][1] / v,
++                re4SkinDirect / 300.0);
+         memset(re4SkinStat, 0, sizeof(re4SkinStat));
+         re4SkinFrames = 0;
+         re4SkinPalCount = 0;
+@@ -3409,7 +3422,7 @@
+         re4SkinEnd();  // a frame without Trans' loops between
+     }
+     re4SkinClose();
+-    if (re4_skin_finish_fn && re4SkinCount) {
++    if (re4_skin_finish_fn && (re4SkinCount || re4_skin_head_fn)) {  /* port (patch 0336): the generation each frame */
+         re4_skin_finish_fn();
+         re4SkinLate = 1;
+         return;

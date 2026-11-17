@@ -1,0 +1,69 @@
+# The 3DS port, stage 3.6: SINF and COSF keep their results by the angle's bits (64 places each, finite
+# angles only): the series costs some 300 cycles on the 3DS and the same angles come many times a frame.
+# Same results. A port patch.
+diff -ruN a/src/game/math_sub.cpp b/src/game/math_sub.cpp
+--- a/src/game/math_sub.cpp	2026-11-03 20:01:19.169149067 +0900
++++ b/src/game/math_sub.cpp	2026-11-03 20:01:19.293338348 +0900
+@@ -734,13 +734,46 @@
+     return s0 + s1;
+ }
+ 
++/* port: the results of SINF and COSF by the angle's bits. The series in C costs some 300 cycles on the 3DS
++   (its fused multiply-adds in double) and the same angles come many times a frame (the collision bodies of
++   every character for each of the others, parts, effects). 64 places a function, the key the angle's bits
++   inverted (an empty place, 0, is a NaN's); finite angles only (LIMIT_ANGLE logs the others). */
++struct TrigMemo {
++    u32 key;
++    f32 val;
++};
++static TrigMemo s_trigMemo[2][64];
++
++static inline TrigMemo* trigMemo(int fn, f32 x, u32* key)
++{
++    u32 b;
++
++    memcpy(&b, &x, sizeof(b));
++    *key = ~b;
++    return &s_trigMemo[fn][(b * 0x9E3779B1u) >> 26];
++}
++
++static inline void trigMemoPut(TrigMemo* m, u32 key, f32 r)
++{
++    if ((~key & 0x7F800000u) != 0x7F800000u) {
++        m->key = key;
++        m->val = r;
++    }
++}
++
+ // sin(x) by a paired-single Taylor series after wrapping x into [-PI, PI).
+ f32 SINF(f32 x)
+ {
+     f32 r;
++    u32 key;
++    TrigMemo* m = trigMemo(0, x, &key);
+ 
++    if (m->key == key) {
++        return m->val;
++    }
+     x = LIMIT_ANGLE(x);
+     r = PsSeries(x); /* port: C version of the paired-single asm */
++    trigMemoPut(m, key, r);
+     return r;
+ }
+ 
+@@ -748,9 +781,15 @@
+ f32 COSF(f32 x)
+ {
+     f32 r;
++    u32 key;
++    TrigMemo* m = trigMemo(1, x, &key);
+ 
++    if (m->key == key) {
++        return m->val;
++    }
+     x = LIMIT_ANGLE(x + 1.5707964f);
+     r = PsSeries(x); /* port: C version of the paired-single asm */
++    trigMemoPut(m, key, r);
+     return r;
+ }
+ 

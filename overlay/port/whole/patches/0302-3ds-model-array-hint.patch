@@ -1,0 +1,32 @@
+# The 3DS port, stage 3.3b (docs 09-stage3-gx.md of the port research): commonModelTrans tells the GX
+# decoder, after it set a model's arrays from the model file (no skinning: vtxOrig, nrmOrig), that they
+# are file data (runtime/gx_fifo.cpp re4_gx_put_hint, a port command 0x03), so the decoder keeps the
+# model's display lists converted (gx_decode.cpp keptList). On the 3DS only; the hint shares the line of
+# the closing brace so the #line numbers after it stay. A port patch.
+--- a/src/game/trans.cpp
++++ b/src/game/trans.cpp
+@@ -38,6 +38,15 @@
+ #include "trans_lit.h"
+ #include "shape.h"
+ 
++// The 3DS port's display list cache (port/whole/runtime/gx_decode.cpp keptList): a model's arrays
++// from its file are told to the decoder after they are set.
++#if defined(__3DS__)
++#include "re4_gx_fifo.h"
++#define RE4_GX_HINT(h) re4_gx_put_hint(h)
++#else
++#define RE4_GX_HINT(h) ((void) 0)
++#endif
++
+ #line 1 "D:/Bio4/Prog/trans.cpp"
+ 
+ 
+@@ -1160,7 +1169,7 @@
+                 GXSetArray(10, d->nrmOrig, 4);
+             } else {
+                 GXSetArray(10, d->nrmOrig, 8);
+-            }
++            } RE4_GX_HINT(1);
+         } else {
+             GXSetArray(9, info->pPosBuf[pG->DblBufIdx], 6);
+             if (d->flags & 0x20000000) {

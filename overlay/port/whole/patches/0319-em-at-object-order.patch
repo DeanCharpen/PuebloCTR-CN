@@ -1,0 +1,197 @@
+# The 3DS port, the fight in r104 (bench8): EmAtCheck walks ObjMgr's active objects (~460) for each of ~36
+# characters a frame; while the list is the same as at the last whole walk (re4_list_gen: cManager.h counts the changes
+# of the watched list, ObjMgr's), it goes over the kept order and reads only the bodies' atari lines, not the links.
+# Same objects, same order, flags read each time: same logic. A port patch.
+diff -ruN a/include/cManager.h b/include/cManager.h
+--- a/include/cManager.h	2026-11-04 22:48:23.901231403 +0900
++++ b/include/cManager.h	2026-11-04 22:48:24.058588958 +0900
+@@ -11,7 +11,7 @@
+ 
+ // Base of every managed work object (cLight, cEsp, cObj, cEm, ...).
+ // GCC 2.95 places the vptr after the fields of the class that introduces it.
+-class cUnit {
++extern "C" u32 re4_list_gen; extern "C" void* re4_list_watch;  /* port: changes of the watched active list */ class cUnit {
+ public:
+     u32 be_flag;  // 0x0  bit0: alive, bit9/10: reserved-alive bits (0x601 = in use)
+ private:
+@@ -125,13 +125,13 @@
+         }
+         q = pAlive;
+         if (q == p) {
+-            pAlive = (T*)p->getNext();
++            pAlive = (T*)p->getNext(); re4_list_gen += (void*) this == re4_list_watch;
+             p->setNext(0);
+             return 1;
+         }
+         for (; q->getNext(); q = (T*)q->getNext()) {
+             if (q->getNext() == p) {
+-                q->setNext(p->getNext());
++                q->setNext(p->getNext()); re4_list_gen += (void*) this == re4_list_watch;
+                 p->setNext(0);
+                 return 1;
+             }
+@@ -148,7 +148,7 @@
+             }
+         }
+         p->setNext(pAlive);
+-        pAlive = p;
++        pAlive = p; re4_list_gen += (void*) this == re4_list_watch;
+     }
+     void addListBack(T* p) {
+         T* q;
+@@ -160,13 +160,13 @@
+         }
+         q = pAlive;
+         if (q == 0) {
+-            pAlive = p;
++            pAlive = p; re4_list_gen += (void*) this == re4_list_watch;
+             return;
+         }
+         while (q->getNext()) {
+             q = (T*)q->getNext();
+         }
+-        q->setNext(p);
++        q->setNext(p); re4_list_gen += (void*) this == re4_list_watch;
+         p->setNext(0);
+     }
+     // Index of `p` in the work array, -1 when it is not one of them.
+@@ -221,7 +221,7 @@
+ {
+     pArray = 0;
+     nArray = 0;
+-    pAlive = 0;
++    pAlive = 0; re4_list_gen += (void*) this == re4_list_watch;
+     pAlivePush = 0;
+     pArrayPush = 0;
+     nArrayPush = 0;
+@@ -360,7 +360,7 @@
+     nArrayPush = nArray;
+     nArray = n;
+     pAlivePush = (u32) pAlive;
+-    pAlive = 0;
++    pAlive = 0; re4_list_gen += (void*) this == re4_list_watch;
+     return 1;
+ }
+ 
+@@ -376,7 +376,7 @@
+     nArray = nArrayPush;
+     pArrayPush = 0;
+     nArrayPush = 0;
+-    pAlive = (T*) pAlivePush;
++    pAlive = (T*) pAlivePush; re4_list_gen += (void*) this == re4_list_watch;
+     return 1;
+ }
+ 
+diff -ruN a/src/game/at_mod.cpp b/src/game/at_mod.cpp
+--- a/src/game/at_mod.cpp	2026-11-04 22:48:23.921048536 +0900
++++ b/src/game/at_mod.cpp	2026-11-04 22:48:24.060052665 +0900
+@@ -149,38 +149,66 @@
+        the colliding ones and the other two go over those in the same order: __em_at_core moves bodies only
+        (pos, m_Pos), no flag, size or list changes, so they pick the same objects. The first walk asks for the
+        lines of the object 8 ahead in the order of the call before (a wrong guess only costs the hint). */
++    /* port: the same walk without the links (bench8, the fight in r104: ~460 objects, 36 calls a frame): the order of
++       a whole walk is kept with re4_list_gen (cManager.h: every change of ObjMgr's active list adds 1); while it is
++       the same, the walk goes over the kept order and reads only the atari lines - the same objects in the same
++       order, their flags and sizes read now. */
+     {
+-        static cObj* s_order[256];
++        static cObj* s_order[1024];
+         static u32 s_orderNum;
++        static u32 s_orderGen;
++        static int s_orderWhole;  // s_order holds the whole list as it was at re4_list_gen == s_orderGen
+         cObj* hit[64];
+         u32 nHit = 0;
+         u32 i = 0;
+         const u32 nOrder = s_orderNum;
+         int over = 0;
+ 
+-        for (i = 0; i < 8 && i < nOrder; i++) {
+-            __builtin_prefetch(s_order[i]);
+-            __builtin_prefetch(&s_order[i]->atari.m_flag);
+-        }
+-        i = 0;
+-        for (o = ObjMgr.getActiveWork(); o != 0; o = ObjMgr.getNext(o), i++) {
+-            if (i + 8 < nOrder) {
+-                __builtin_prefetch(s_order[i + 8]);
+-                __builtin_prefetch(&s_order[i + 8]->atari.m_flag);
+-            }
+-            if (i < 256) {
+-                s_order[i] = o;
+-            }
+-            if ((o->atari.m_flag & 0x200) && o->atari.m_radius2 != 0.0f) {
+-                o->atari.getPos(o, &o->atari.m_Pos);
+-                if (nHit < 64) {
+-                    hit[nHit++] = o;
+-                } else {
+-                    over = 1;
++        if (s_orderWhole && s_orderGen == re4_list_gen) {
++            for (i = 0; i < 8 && i < nOrder; i++) {
++                __builtin_prefetch(&s_order[i]->atari.m_flag);
++            }
++            for (i = 0; i < nOrder; i++) {
++                if (i + 8 < nOrder) {
++                    __builtin_prefetch(&s_order[i + 8]->atari.m_flag);
++                }
++                o = s_order[i];
++                if ((o->atari.m_flag & 0x200) && o->atari.m_radius2 != 0.0f) {
++                    o->atari.getPos(o, &o->atari.m_Pos);
++                    if (nHit < 64) {
++                        hit[nHit++] = o;
++                    } else {
++                        over = 1;
++                    }
+                 }
+             }
++        } else {
++            for (i = 0; i < 8 && i < nOrder; i++) {
++                __builtin_prefetch(s_order[i]);
++                __builtin_prefetch(&s_order[i]->atari.m_flag);
++            }
++            i = 0;
++            for (o = ObjMgr.getActiveWork(); o != 0; o = ObjMgr.getNext(o), i++) {
++                if (i + 8 < nOrder) {
++                    __builtin_prefetch(s_order[i + 8]);
++                    __builtin_prefetch(&s_order[i + 8]->atari.m_flag);
++                }
++                if (i < 1024) {
++                    s_order[i] = o;
++                }
++                if ((o->atari.m_flag & 0x200) && o->atari.m_radius2 != 0.0f) {
++                    o->atari.getPos(o, &o->atari.m_Pos);
++                    if (nHit < 64) {
++                        hit[nHit++] = o;
++                    } else {
++                        over = 1;
++                    }
++                }
++            }
++            s_orderNum = i < 1024 ? i : 1024;
++            s_orderWhole = i <= 1024;
++            s_orderGen = re4_list_gen;
+         }
+-        s_orderNum = i < 256 ? i : 256;
+         if (!over) {
+             for (i = 0; i < nHit; i++) {
+                 if (hit[i] != pMod) {
+@@ -851,3 +879,9 @@
+     }
+     return 0;
+ }
++
++/* port: the count of changes of the watched manager's active list (cManager.h), ObjMgr's (EmAtCheck) */
++extern "C" {
++u32 re4_list_gen;
++void* re4_list_watch = &ObjMgr;
++}
+diff -ruN a/src/game/light.cpp b/src/game/light.cpp
+--- a/src/game/light.cpp	2026-11-04 22:48:23.906613830 +0900
++++ b/src/game/light.cpp	2026-11-04 22:48:24.058791743 +0900
+@@ -1716,7 +1716,7 @@
+ void cLightMgr::outSscrn(u32 mode)
+ {
+     nArray = nArrayBak;
+-    pAlive = pAliveBak;
++    pAlive = pAliveBak; re4_list_gen += (void*) this == re4_list_watch;
+     switch (mode) {
+     case 0:
+     default:

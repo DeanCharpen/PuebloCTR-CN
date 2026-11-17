@@ -1,0 +1,39 @@
+# Port patch 0332 (2026-11-09): cSatMgr::wallAdjust leaves out its second ray when the first one missed and the segment is bit for bit the same after the sphere check - the same input in the same scenario, it would miss again and change nothing. About 15 of 110 rays a frame in the r104 fight (bench8).
+diff -ruN a/src/game/atari.cpp b/src/game/atari.cpp
+--- a/src/game/atari.cpp	2026-11-09 15:08:27.151599760 +0900
++++ b/src/game/atari.cpp	2026-11-09 15:08:27.512120674 +0900
+@@ -331,6 +331,10 @@
+     Vec n;
+     Vec d;
+     Vec p0;
++    /* port (patch 0332): the first ray's input when it missed (the second one, the same input, misses too) */
++    Vec missOld;
++    Vec missNew;
++    int missed = 0;
+ 
+     if (flag & 1) {
+         if (hitCheck(pos_old, pos_new, &hit, &n, flag, mask)) {
+@@ -339,6 +343,10 @@
+             if (pNorm) {
+                 *pNorm = n;
+             }
++        } else {
++            missOld = *pos_old;
++            missNew = *pos_new;
++            missed = 1;
+         }
+     }
+     PSVECSubtract(pos_new, pos_old, &d);
+@@ -346,6 +354,12 @@
+     PSVECAdd(pos_old, &d, pos_new);
+     polySphereCk(&p0, pos_new, radius, flag | 0xA0, pNorm, mask);
+     polySphereCk(&p0, pos_new, radius, flag | 0x80, pNorm, mask);
++    /* port (patch 0332): the same segment in the same scenario as a ray that missed: it misses again and changes
++       nothing (hitCheck2 writes pos1, the normal and pBypassAt only on a hit; SEck holds this manager's type; polyBit
++       is cleared before each use) - left out */
++    if (missed && !memcmp(&missOld, pos_old, sizeof(Vec)) && !memcmp(&missNew, pos_new, sizeof(Vec))) {
++        flag &= ~1;
++    }
+     if (flag & 1) {
+         if (hitCheck(pos_old, pos_new, &hit, &n, flag, mask)) {
+             PSVECScale(&n, &tmp, radius);

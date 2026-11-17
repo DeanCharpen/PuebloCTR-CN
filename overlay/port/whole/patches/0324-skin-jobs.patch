@@ -1,0 +1,323 @@
+# The 3DS port, the fight in r104 (bench8): the skinning of the models in Trans' objTrans/emTrans loops (CalcSk1_x/_x2,
+# ~5 ms of the game's frame) as jobs with a copy of the model's palette: the GX thread takes them in its idle time, the
+# game while it waits for it and at the end of Render_done (the rest; before the data could be freed and before the
+# next Render, the buffers' only reader). Sk1Loop/Sk1Pairs take GQR6 and the palette as parameters. The same vertices.
+# RE4_SKIN_JOBS=0: the original. A port patch (and port/whole/3ds/gx_thread_3ds.cpp).
+diff -ruN a/src/game/main.cpp b/src/game/main.cpp
+--- a/src/game/main.cpp	2026-11-05 01:12:54.458086425 +0900
++++ b/src/game/main.cpp	2026-11-05 01:12:54.627253577 +0900
+@@ -206,7 +206,7 @@
+             EprintfFlush();
+             ProcessTickGet(2, "PROCESS CPU");
+             iTaskScheduler();
+-            Render_done();
++            Render_done(); { void re4SkinJoin(); re4SkinJoin(); }  // port: the skinning jobs (trans.cpp, patch 0324)
+             Block.checkCommand();
+             DC.check();
+             Block.checkCondition();
+diff -ruN a/src/game/trans.cpp b/src/game/trans.cpp
+--- a/src/game/trans.cpp	2026-11-05 01:12:54.532420741 +0900
++++ b/src/game/trans.cpp	2026-11-05 01:12:54.626304461 +0900
+@@ -306,7 +306,7 @@
+ 
+ void ThermoShaderSetup(cModel* m, cModelInfo* info, cPolyHeader* part);
+ void shaderSetup(cModel* m, cModelInfo* info, cPolyHeader* part, Mtx mv);
+-void TextureBlend(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn);
++void TextureBlend(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn); static void re4SkinPut(void* dst, void* src, u32 n, int kind); static void re4SkinPalette(int n); static void re4SkinDefer(int on); static void re4SkinNow();  // port: skinning jobs (end of file)
+ void TextureBlend2(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn);
+ void TextureBlend3(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn);
+ void materialSetup(cPolyHeader* part, cModelInfo* info, int colIn, int alphaIn); extern "C" int re4_gx_vtx_same(u32 key); extern "C" void re4_gx_vtx_keep(u32 key);  // port: GXAttr.c
+@@ -372,7 +372,7 @@
+             TransTexRenderMgr();
+         }
+     }
+-    func = objTrans;
++    func = objTrans; re4SkinDefer(1);  // port: the skinning of these as jobs
+     for (u = ObjMgr.getActiveWork(); u != 0;) {
+         cUnit* cur = u;
+         u = u->getNext();
+@@ -384,7 +384,7 @@
+         u = u->getNext();
+         func((cModel*) cur);
+     }
+-    ProcessTickGet(5, "objTrans");
++    re4SkinDefer(0); ProcessTickGet(5, "objTrans");
+     DCStoreRangeNoSync(primStart, (u8*) pG->prim_base - primStart);
+ }
+ 
+@@ -757,14 +757,14 @@
+         }
+         info->pNrmBuf[pG->DblBufIdx] = buf;
+         if (d->weight_ext_num > 0xFF) {
+-            MakeWeightPaletteExt((cWeightExt*) d->pWeight, d->weight_ext_num);
++            MakeWeightPaletteExt((cWeightExt*) d->pWeight, d->weight_ext_num); re4SkinPalette(d->weight_ext_num);
+         } else {
+-            MakeWeightPalette((cWeight*) d->pWeight, d->weight_palette_num);
++            MakeWeightPalette((cWeight*) d->pWeight, d->weight_palette_num); re4SkinPalette(d->weight_palette_num);
+         }
+         setupGQR6(((d->shift << 24) | (d->shift << 8)) | 0x00070007);
+         src = d->vtxOrig;
+         if (info->be_flag & 2) {
+-            int i;
++            int i; re4SkinNow();  // port: the shape's 8-byte source runs into the normals' buffer: at once, in order
+             src = info->pPosBuf[pG->DblBufIdx];
+             for (i = 0; i < 5; i++) {
+                 if (i == 0) {
+@@ -780,7 +780,7 @@
+             pLog->err(0, 0, "ComnScreenMatSub() PTR ERR");
+             return 0;
+         }
+-        CalcSk1_x(info->pPosBuf[pG->DblBufIdx], src, nVtx);
++        re4SkinPut(info->pPosBuf[pG->DblBufIdx], src, nVtx, 0);  // port: CalcSk1_x or a job
+         DCStoreRangeNoSync(info->pPosBuf[pG->DblBufIdx], d->nVtx * 6);
+         setupGQR6(0x32073207);
+         nsrc = d->nrmOrig;
+@@ -788,9 +788,9 @@
+         if (d->flags & 0x20000000) {
+             void* dst = info->pNrmBuf[pG->DblBufIdx];
+             setupGQR6(0x20062006);
+-            CalcSk1_x2(dst, nsrc, n);
++            re4SkinPut(dst, nsrc, n, 1);  // port: CalcSk1_x2 or a job
+         } else {
+-            CalcSk1_x(info->pNrmBuf[pG->DblBufIdx], nsrc, n);
++            re4SkinPut(info->pNrmBuf[pG->DblBufIdx], nsrc, n, 0);  // port: CalcSk1_x or a job
+         }
+         DCStoreRangeNoSync(info->pNrmBuf[pG->DblBufIdx], d->nNrm * 6);
+     }
+@@ -2516,9 +2516,9 @@
+    the results only go into the picture), then quantised: times 2^store scale, clamped,
+    truncated. The scales come from GQR6. The hardware loop runs 2^32 times for n == 0 and
+    reads the matrix index of the vertex after the last; neither is reproduced. */
+-static void Sk1Loop(void* dst, const void* src, u32 n, int bytes)
++static void Sk1Loop(void* dst, const void* src, u32 n, int bytes, u32 gqr = sGqr6, const u8* re4Lc = (const u8*) RE4_LC_BASE)
+ {
+-    u32 gqr = sGqr6;
++    /* port: GQR6 and the palette are parameters (the skinning jobs, patch 0324) */
+     f32 ld = ldexpf(1.0f, -re4_gqr_scale(gqr >> 24));
+     f32 st = ldexpf(1.0f, re4_gqr_scale(gqr >> 8));
+     u32 type = bytes ? 6 : 7;
+@@ -2559,7 +2559,7 @@
+             }
+             continue;
+         }
+-        m = (const f32*) (RE4_LC_BASE + idx * 0x30);
++        m = (const f32*) (re4Lc + idx * 0x30);
+         for (k = 0; k < 3; k++) {
+             r[k] = re4_madds(m[6 + k], v[2], re4_madds(m[3 + k], v[1], re4_madds(m[k], v[0], m[9 + k])));
+         }
+@@ -2583,17 +2583,17 @@
+    matrix index outside the locked cache, the last of an odd count and a GQR6 not of the kind go to Sk1Loop.
+    RE4_SK1_PAIRS=0: Sk1Loop alone. */
+ template <int B>
+-static void Sk1Pairs(void* dst, const void* src, u32 n)
++static void Sk1Pairs(void* dst, const void* src, u32 n, u32 gqr = sGqr6, const u8* re4Lc = (const u8*) RE4_LC_BASE)
+ {
+     static int on = -1;
+     if (on < 0) {
+         const char* v = getenv("RE4_SK1_PAIRS");
+         on = !(v && v[0] == '0');
+     }
+-    u32 gqr = sGqr6;
++    /* port: gqr and re4Lc are parameters (patch 0324) */
+     u32 type = B ? 6 : 7;
+     if (!on || ((gqr >> 16) & 7) != type || (gqr & 7) != type) {
+-        Sk1Loop(dst, src, n, B);
++        Sk1Loop(dst, src, n, B, gqr, re4Lc);
+         return;
+     }
+     f32 ld = ldexpf(1.0f, -re4_gqr_scale(gqr >> 24));
+@@ -2630,14 +2630,14 @@
+         }
+         if (ia >= RE4_LOCKED_CACHE_SIZE / 0x30 || ib >= RE4_LOCKED_CACHE_SIZE / 0x30) {
+             if (B) {
+-                Sk1Loop((s8*) dst + i * 3, (const s8*) src + i * 4, 2, B);
++                Sk1Loop((s8*) dst + i * 3, (const s8*) src + i * 4, 2, B, gqr, re4Lc);
+             } else {
+-                Sk1Loop((s16*) dst + i * 3, (const s16*) src + i * 4, 2, B);
++                Sk1Loop((s16*) dst + i * 3, (const s16*) src + i * 4, 2, B, gqr, re4Lc);
+             }
+             continue;
+         }
+-        const f32* ma = (const f32*) (RE4_LC_BASE + ia * 0x30);
+-        const f32* mb = (const f32*) (RE4_LC_BASE + ib * 0x30);
++        const f32* ma = (const f32*) (re4Lc + ia * 0x30);
++        const f32* mb = (const f32*) (re4Lc + ib * 0x30);
+         for (k = 0; k < 3; k++) {
+             ra[k] = re4_madds(ma[6 + k], a[2], re4_madds(ma[3 + k], a[1], re4_madds(ma[k], a[0], ma[9 + k])));
+             rb[k] = re4_madds(mb[6 + k], b[2], re4_madds(mb[3 + k], b[1], re4_madds(mb[k], b[0], mb[9 + k])));
+@@ -2658,9 +2658,9 @@
+     }
+     if (i < n) {
+         if (B) {
+-            Sk1Loop((s8*) dst + i * 3, (const s8*) src + i * 4, n - i, B);
++            Sk1Loop((s8*) dst + i * 3, (const s8*) src + i * 4, n - i, B, gqr, re4Lc);
+         } else {
+-            Sk1Loop((s16*) dst + i * 3, (const s16*) src + i * 4, n - i, B);
++            Sk1Loop((s16*) dst + i * 3, (const s16*) src + i * 4, n - i, B, gqr, re4Lc);
+         }
+     }
+ }
+@@ -3062,3 +3062,163 @@
+     GXSetColorUpdate(1);
+     GXSetAlphaUpdate(0);
+ }
++
++/* port (3.6, patch 0324): the skinning of the models in Trans' objTrans/emTrans loops as jobs. Their vertices go into
++   the primary buffer this frame fills (pPosBuf/pNrmBuf[DblBufIdx]), which only the next frame's Render() reads (the GX
++   thread, through GXSetArray). A job: destination, source, count, GQR6, a copy of the model's palette, the kind. Who is
++   free takes the next one (re4_skin_help, an atomic counter): the GX thread in its idle time (gx_thread_3ds.cpp, woken
++   through re4_skin_wake_fn), the game while it waits for the GX thread, and the game at the end of Render_done
++   (re4SkinJoin: the rest, then it waits for the jobs started) -- before Block.checkCommand/DC.check may free a model's
++   data and before the next Render(). Linux: no GX thread, the game runs them there. RE4_SKIN_JOBS=0: the original. */
++namespace {
++struct Re4SkinJob {
++    void* dst;
++    const void* src;
++    u32 n;
++    u32 gqr;
++    const u8* lc;
++    int kind;  // 1: s8 normals (CalcSk1_x2), 0: s16 (CalcSk1_x)
++};
++const u32 kRe4SkinJobs = 512;
++const u32 kRe4SkinArena = 96u << 10;  // bench5 16-36 KB a frame; full: skinned at once
++Re4SkinJob re4SkinJobs[kRe4SkinJobs];
++alignas(32) u8 re4SkinArena[kRe4SkinArena];
++u32 re4SkinArenaUsed;
++const u8* re4SkinLc;      // the copy of the palette the last MakeWeightPalette made (0: none)
++int re4SkinOn = -1;       // RE4_SKIN_JOBS
++int re4SkinDeferring;     // inside Trans' model loops
++u32 re4SkinCount;         // jobs published (the game writes)
++u32 re4SkinNext;          // the next job to take
++u32 re4SkinDone;          // jobs finished
++u32 re4SkinStat[3][2];    // by who (0 GX thread, 1 the game waiting, 2 the join): jobs, vertices
++u32 re4SkinFrames, re4SkinPalBytes, re4SkinDirect;
++}  // namespace
++
++extern "C" {
++void (*re4_skin_wake_fn)(void);  // gx_thread_3ds.cpp: wakes the GX thread if it sleeps
++int re4_skin_help(int who);
++void re4SkinJoin(void);          // main.cpp, after Render_done
++}
++
++static void re4SkinRun(const Re4SkinJob& j)
++{
++    if (j.kind) {
++        Sk1Pairs<1>(j.dst, j.src, j.n, j.gqr, j.lc);
++    } else {
++        Sk1Pairs<0>(j.dst, j.src, j.n, j.gqr, j.lc);
++    }
++}
++
++static void re4SkinDefer(int on)
++{
++    if (re4SkinOn < 0) {
++        const char* e = getenv("RE4_SKIN_JOBS");
++        re4SkinOn = e ? atoi(e) : 1;
++        Sk1Pairs<0>(0, 0, 0, 0x00070007);  // their getenv once, here on the game's thread (no vertices)
++        Sk1Pairs<1>(0, 0, 0, 0x00060006);
++    }
++    re4SkinDeferring = on && re4SkinOn;
++    re4SkinLc = 0;
++}
++
++// A model with shapes: ResetShape puts its 8-byte source vertices into the 6-byte position buffer, the rest runs
++// into the normals' buffer allocated after it, and the positions read it in place -- the normals must come after
++// them, as before: both skinned at once (only for this model info; the next palette starts over).
++static void re4SkinNow()
++{
++    re4SkinLc = 0;
++}
++
++static void re4SkinPalette(int n)
++{
++    re4SkinLc = 0;
++    if (!re4SkinDeferring || n <= 0) {
++        return;
++    }
++    u32 bytes = (u32) n * 0x30;
++    if (bytes > RE4_LOCKED_CACHE_SIZE) {
++        bytes = RE4_LOCKED_CACHE_SIZE;
++    }
++    if (re4SkinArenaUsed + bytes > kRe4SkinArena) {
++        return;
++    }
++    u8* p = re4SkinArena + re4SkinArenaUsed;
++    memcpy(p, (const void*) RE4_LC_BASE, bytes);
++    re4SkinArenaUsed += (bytes + 31) & ~31u;
++    re4SkinPalBytes += bytes;
++    re4SkinLc = p;
++}
++
++static void re4SkinPut(void* dst, void* src, u32 n, int kind)
++{
++    const u32 c = re4SkinCount;
++    if (!re4SkinDeferring || !re4SkinLc || c >= kRe4SkinJobs) {
++        re4SkinDirect++;
++        if (kind) {
++            CalcSk1_x2(dst, src, n);
++        } else {
++            CalcSk1_x(dst, src, n);
++        }
++        return;
++    }
++    Re4SkinJob& j = re4SkinJobs[c];
++    j.dst = dst;
++    j.src = src;
++    j.n = n;
++    j.gqr = sGqr6;
++    j.lc = re4SkinLc;
++    j.kind = kind;
++    __atomic_store_n(&re4SkinCount, c + 1, __ATOMIC_SEQ_CST);
++    if (re4_skin_wake_fn) {
++        re4_skin_wake_fn();
++    }
++}
++
++extern "C" int re4_skin_help(int who)
++{
++    u32 i = __atomic_load_n(&re4SkinNext, __ATOMIC_SEQ_CST);
++    for (;;) {
++        if (i >= __atomic_load_n(&re4SkinCount, __ATOMIC_SEQ_CST)) {
++            return 0;
++        }
++        if (__atomic_compare_exchange_n(&re4SkinNext, &i, i + 1, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
++            break;
++        }
++    }
++    const Re4SkinJob& j = re4SkinJobs[i];
++    re4SkinRun(j);
++    __atomic_fetch_add(&re4SkinStat[who][0], 1, __ATOMIC_RELAXED);
++    __atomic_fetch_add(&re4SkinStat[who][1], j.n, __ATOMIC_RELAXED);
++    __atomic_fetch_add(&re4SkinDone, 1, __ATOMIC_SEQ_CST);
++    return 1;
++}
++
++extern "C" void re4SkinJoin()  // C linkage: main.cpp's game loop is inside extern "C"
++{
++    while (re4_skin_help(2)) {
++    }
++    const u32 c = re4SkinCount;
++    while (__atomic_load_n(&re4SkinDone, __ATOMIC_SEQ_CST) != c) {
++        // the jobs others started (an atomic load a pass)
++    }
++    __atomic_store_n(&re4SkinCount, 0, __ATOMIC_SEQ_CST);
++    __atomic_store_n(&re4SkinNext, 0, __ATOMIC_SEQ_CST);
++    __atomic_store_n(&re4SkinDone, 0, __ATOMIC_SEQ_CST);
++    re4SkinArenaUsed = 0;
++    if (re4SkinOn > 0 && ++re4SkinFrames == 300) {
++        double jobs = 0, vtx = 0;
++        for (int w = 0; w < 3; w++) {
++            jobs += re4SkinStat[w][0];
++            vtx += re4SkinStat[w][1];
++        }
++        const double v = vtx > 0 ? vtx : 1;
++        re4_log("skin jobs (per frame, 300 frames): %.1f jobs, %.0f vertices; by vertices: GX thread %.0f%%, the game "
++                "waiting %.0f%%, at the join %.0f%%; palettes %.1f KB; %.1f skinned at once",
++                jobs / 300, vtx / 300, 100.0 * re4SkinStat[0][1] / v, 100.0 * re4SkinStat[1][1] / v,
++                100.0 * re4SkinStat[2][1] / v, re4SkinPalBytes / 300.0 / 1024, re4SkinDirect / 300.0);
++        memset(re4SkinStat, 0, sizeof(re4SkinStat));
++        re4SkinFrames = 0;
++        re4SkinPalBytes = 0;
++        re4SkinDirect = 0;
++    }
++}

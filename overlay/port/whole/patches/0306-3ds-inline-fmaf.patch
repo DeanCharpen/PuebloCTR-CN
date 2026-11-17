@@ -1,0 +1,27 @@
+# The 3DS port, stage 3.6: the C versions of the paired-single multiply-adds call re4_fmaf (re4_ppc.h):
+# on the 3DS newlib's fmaf inline (VFPv2 has no fused multiply-add; the call per operation serialised
+# the skinning loop, 13 % of a frame of r100), elsewhere fmaf. Same results. A port patch.
+--- a/src/game/math_sub.cpp
++++ b/src/game/math_sub.cpp
+@@ -728,8 +728,8 @@
+         f32 t = p1;
+         p0 = a0 * t;
+         p1 = a1 * t;
+-        s0 = fmaf(p0, Coeff[i * 2], s0);
+-        s1 = fmaf(p1, Coeff[i * 2 + 1], s1);
++        s0 = re4_fmaf(p0, Coeff[i * 2], s0);
++        s1 = re4_fmaf(p1, Coeff[i * 2 + 1], s1);
+     }
+     return s0 + s1;
+ }
+--- a/src/game/trans.cpp
++++ b/src/game/trans.cpp
+@@ -2557,7 +2557,7 @@
+         }
+         m = (const f32*) (RE4_LC_BASE + idx * 0x30);
+         for (k = 0; k < 3; k++) {
+-            r[k] = fmaf(m[6 + k], v[2], fmaf(m[3 + k], v[1], fmaf(m[k], v[0], m[9 + k])));
++            r[k] = re4_fmaf(m[6 + k], v[2], re4_fmaf(m[3 + k], v[1], re4_fmaf(m[k], v[0], m[9 + k])));
+         }
+         if (bytes) {
+             s8* out = (s8*) dst + i * 3;

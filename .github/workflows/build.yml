@@ -1,0 +1,113 @@
+# PuebloCTR's builds: the game for the New 3DS (.3dsx + .cia) in the build image (docker/Dockerfile: the same image the
+# local builds use) and PuebloPrep for Windows, macOS and Linux. A tag v* makes a draft release with the files and
+# their SHA-256 sums.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['**.md', 'LICENSE', 'licenses/**']  # (texts only: no build; tags are built always)
+  pull_request:
+    paths-ignore: ['**.md', 'LICENSE', 'licenses/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      text: ${{ steps.v.outputs.text }}
+    steps:
+      - id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then echo "text=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else echo "text=dev-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"; fi
+
+  game:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build image
+        run: docker build -t puebloctr-build docker
+      # (at /work/repo, as the local builds: the build path is in the binary - one assert's __FILE__)
+      - name: Build the game (.3dsx, .cia)
+        env:
+          VERSION: ${{ needs.version.outputs.text }}
+        run: |
+          docker run --rm -v "$PWD":/work/repo -w /work/repo -e VERSION puebloctr-build bash -c '
+            set -e
+            git config --global --add safe.directory "*"
+            bash tools/build.sh --release --version "$VERSION" --jobs "$(nproc)"
+            bash tools/build_cia.sh "$VERSION"'
+          mkdir -p dist
+          cp build/tree/port/build/3ds-release/PuebloCTR.3dsx build/tree/port/build/3ds-release/PuebloCTR.cia dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: game
+          path: dist/*
+
+  puebloprep:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux, runner: ubuntu-22.04 }
+          - { os: windows, runner: ubuntu-24.04 }
+          - { os: macos, runner: macos-15 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build clang libx11-dev libxext-dev libxrandr-dev \
+            libxcursor-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libdbus-1-dev libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev
+          echo "CC=clang" >> "$GITHUB_ENV"; echo "CXX=clang++" >> "$GITHUB_ENV"
+      - name: Tools (Windows, mingw-w64)
+        if: matrix.os == 'windows'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix
+      - name: Tools (macOS)
+        if: matrix.os == 'macos'
+        run: brew list ninja >/dev/null 2>&1 || brew install ninja
+      - name: CubeEvil4 (port/ only)
+        run: bash tools/fetch_cubeevil4.sh --port-only
+      - name: Build PuebloPrep
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: bash tools/build_puebloprep.sh ${{ matrix.os }} "${{ needs.version.outputs.text }}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puebloprep-${{ matrix.os }}
+          path: dist/*
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [game, puebloprep]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" --draft --prerelease \
+            --title "PuebloCTR $GITHUB_REF_NAME" --notes "Unofficial New 3DS port. You need your own GameCube discs: see README."

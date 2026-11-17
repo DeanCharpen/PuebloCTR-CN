@@ -1,0 +1,27 @@
+# The 3DS port, stage 3.6: the skinning loop (trans.cpp Sk1Loop) multiplies and adds with re4_madds
+# (re4_ppc.h): on the 3DS in float, rounded twice, without re4_fmaf's double (its results only go
+# into the picture); elsewhere fmaf, the same results. A port patch.
+diff -ruN a/src/game/trans.cpp b/src/game/trans.cpp
+--- a/src/game/trans.cpp	2026-11-03 14:21:21.494529769 +0900
++++ b/src/game/trans.cpp	2026-11-03 14:21:21.634385436 +0900
+@@ -2508,8 +2508,9 @@
+ 
+ /* port: C version of the paired-single skinning loops below. Per vertex: the palette matrix
+    (ROMtx, 12 floats, in the locked cache at index * 0x30) times the dequantised input
+-   (x, y, z) * 2^-load scale, three fused multiply-adds per row starting from the
+-   translation (ps_madds0/ps_madds1/ps_madds0), then quantised: times 2^store scale, clamped,
++   (x, y, z) * 2^-load scale, three multiply-adds per row starting from the
++   translation (ps_madds0/ps_madds1/ps_madds0; re4_madds: on the 3DS in float, rounded twice, as
++   the results only go into the picture), then quantised: times 2^store scale, clamped,
+    truncated. The scales come from GQR6. The hardware loop runs 2^32 times for n == 0 and
+    reads the matrix index of the vertex after the last; neither is reproduced. */
+ static void Sk1Loop(void* dst, const void* src, u32 n, int bytes)
+@@ -2557,7 +2558,7 @@
+         }
+         m = (const f32*) (RE4_LC_BASE + idx * 0x30);
+         for (k = 0; k < 3; k++) {
+-            r[k] = re4_fmaf(m[6 + k], v[2], re4_fmaf(m[3 + k], v[1], re4_fmaf(m[k], v[0], m[9 + k])));
++            r[k] = re4_madds(m[6 + k], v[2], re4_madds(m[3 + k], v[1], re4_madds(m[k], v[0], m[9 + k])));
+         }
+         if (bytes) {
+             s8* out = (s8*) dst + i * 3;

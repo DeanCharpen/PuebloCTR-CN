@@ -1,0 +1,1156 @@
+# MEM1 at another base (RE4_MEM1_BASE, re4_whole_prelude.h): the GameCube keeps MEM1 at
+# 0x80000000, a platform without that address (the 3DS: applications below 0x40000000) moves it.
+# - fixed MEM1 addresses (SystemMemInit map, archive load addresses, frame buffers, FIFO,
+#   ROM font, DVD buffers) go through RE4_GC
+# - the 0x80000000..0x82FFFFFF checks become RE4_IN_MEM1 / bounds from RE4_MEM1_BASE
+# - "already relocated" sign tests on file offsets become RE4_IS_ADDR
+# - ordering-table entry links (ClearOTagR, its walkers) carry their tag in bit 0 instead of a
+#   cleared bit 31, so entries and primitives stay apart below 0x80000000
+# - physical to virtual (FST offset, GXGetTexObjData) from RE4_MEM1_BASE
+# With the default base every check keeps its GameCube meaning.
+--- a/include/cManager.h
+--- a/include/cManager.h
++++ b/include/cManager.h
+@@ -397,7 +397,7 @@
+ template <class T>
+ inline void cManager<T>::destroy(T* p)
+ {
+-    if ((u32)p < 0x80000000 || (u32)p > 0x82FFFFFF) {
++    if ((u32)p < RE4_MEM1_BASE || (u32)p > RE4_GC(0x82FFFFFF)) {
+         if (p != 0) {
+             log("%s::destroy() ERROR, INVALID  PTR %08X", name, p);
+         }
+--- a/include/dolphin/os.h
++++ b/include/dolphin/os.h
+@@ -50,7 +50,11 @@
+ #define DOLPHIN_ALIGNMENT 32
+ 
+ // Upper words of the masks, since UIMM is only 16 bits
++#ifdef RE4_MEM1_BASE  /* port: patch 0151 */
++#define OS_CACHED_REGION_PREFIX   ((u32) (RE4_MEM1_BASE) >> 16)
++#else
+ #define OS_CACHED_REGION_PREFIX   0x8000u  /* port: patch 0068 */
++#endif
+ #define OS_UNCACHED_REGION_PREFIX 0xC000u
+ #define OS_PHYSICAL_MASK 0x3FFF
+ 
+@@ -204,7 +208,7 @@
+ void* OSUncachedToCached(void* ucaddr);
+ 
+ #if !DEBUG
+-#define OSPhysicalToCached(paddr)    ((void*) ((u32)(OS_BASE_CACHED   + (u32)(paddr))))
++#define OSPhysicalToCached(paddr)    ((void*) ((u32)(OS_BASE_CACHED   + ((u32)(paddr) & 0x03FFFFFFu))))
+ #define OSPhysicalToUncached(paddr)  ((void*) ((u32)(OS_BASE_UNCACHED + (u32)(paddr))))
+ #define OSCachedToPhysical(caddr)    ((u32)   ((u32)(caddr)  - OS_BASE_CACHED))
+ #define OSUncachedToPhysical(ucaddr) ((u32)   ((u32)(ucaddr) - OS_BASE_UNCACHED))
+--- a/include/main_mem.h
++++ b/include/main_mem.h
+@@ -16,7 +16,7 @@
+ // too; in the port they are host stacks and the game libraries, which
+ // re4_valid_port_ptr (runtime/os_thread.cpp) accepts.
+ extern "C" int re4_valid_port_ptr(const void* p);
+-#define VALID_PTR(p) (((u32) (p) >= 0x80000000 && (u32) (p) <= 0x82FFFFFF) || re4_valid_port_ptr((const void*) (p)))
++#define VALID_PTR(p) (RE4_IN_MEM1(p) || re4_valid_port_ptr((const void*) (p)))
+ // Size / address rounded up to the 32-byte DMA and cache-line unit.
+ #define ALIGN32(x) (((x) + 0x1F) & ~0x1F)
+ 
+--- a/src/game/act_btn.cpp
++++ b/src/game/act_btn.cpp
+@@ -51,8 +51,8 @@
+         return;
+     }
+     for (tag = m_ot[15]; tag != 0xFFFFFFFF; tag = w->tag) {
+-        w = (ACT_WORK*) (tag | 0x80000000);
+-        if ((s32) tag >= 0) {
++        w = (ACT_WORK*) RE4_OT_PTR(tag);
++        if (!RE4_OT_IS_PRIM(tag)) {
+             continue;
+         }
+         if (w->flags & ACTCTR_NO_EXEC) {
+--- a/src/game/block.cpp
++++ b/src/game/block.cpp
+@@ -40,8 +40,8 @@
+     u32 v;
+ 
+     while ((v = *pOt) != 0xFFFFFFFF) {
+-        pOt = (u32*) (v | 0x80000000);
+-        if ((s32) v < 0) {
++        pOt = (u32*) RE4_OT_PTR(v);
++        if (RE4_OT_IS_PRIM(v)) {
+             return pOt;
+         }
+     }
+--- a/src/game/cam_ctrl.cpp
++++ b/src/game/cam_ctrl.cpp
+@@ -299,7 +299,7 @@
+ 
+     rec = (CUT_INFO*) (pBuff + 1);
+     for (i = 0; i < pBuff->nAdat; i++, rec++) {
+-        if ((s32) rec->pAdat < 0) {
++        if (RE4_IS_ADDR(rec->pAdat)) {
+             return pBuff;
+         }
+         rec->pAdat = (AREA_DATA*) ((u32) rec->pAdat + (u32) pBuff);
+--- a/src/game/cam_motion.cpp
++++ b/src/game/cam_motion.cpp
+@@ -31,7 +31,7 @@
+     tbl = (u32*) ((u32) w->pJoint_no + w->Joint_num);
+     tbl = (u32*) (((u32) tbl + 3) & ~3);
+     tbl++;
+-    if ((s32) tbl[0] >= 0) {
++    if (!RE4_IS_ADDR(tbl[0])) {
+         for (i = 0; i < w->Joint_num; i++) {
+             tbl[i] += (u32) w->pMot;
+         }
+--- a/src/game/card.cpp
++++ b/src/game/card.cpp
+@@ -3069,7 +3069,7 @@
+     u32 i;
+     TEXDescriptor* desc;
+ 
+-    if ((s32) tpl->descriptorArray < 0) {
++    if (RE4_IS_ADDR(tpl->descriptorArray)) {
+         return;
+     }
+     tpl->descriptorArray = (TEXDescriptor*) ((u32) tpl->descriptorArray + (u32) tpl);
+--- a/src/game/cloth.cpp
++++ b/src/game/cloth.cpp
+@@ -153,7 +153,7 @@
+     if (pal == 0) {
+         return;
+     }
+-    if ((s32) pal->descriptorArray < 0) {
++    if (RE4_IS_ADDR(pal->descriptorArray)) {
+         return;
+     }
+     pal->descriptorArray = (TEXDescriptor*) ((u32) pal->descriptorArray + (u32) pal);
+--- a/src/game/debug.cpp
++++ b/src/game/debug.cpp
+@@ -57,7 +57,7 @@
+ // into `lis 0x8000` + displacement. Replaces the SDK macro of the same name (dvd.cpp / main_sub.cpp
+ // too; each unit's override has to follow its own <dolphin/os.h>, so it is not in a header).
+ #undef OS_BUS_CLOCK
+-#define OS_BUS_CLOCK (((OSLowMem*) 0x80000000)->busClock)
++#define OS_BUS_CLOCK (((OSLowMem*) RE4_GC(0x80000000))->busClock)
+ struct OSLowMem {
+     u8 pad_0[0xF8];
+     u32 busClock;   // 0xF8
+@@ -148,7 +148,7 @@
+     // stands in for it (its read below folds back to `li 0`, no code).
+     s16 zz = 0;
+     // clk's `lis 0x8000` (a block-0 filler at sched1) follows the zero's `li` in the target: LUID order.
+-    clk = (OSLowMem*) 0x80000000;
++    clk = (OSLowMem*) RE4_GC(0x80000000);
+     t->code = 4;
+     t->x0 = 6;
+     t->y0 = 30;
+@@ -328,7 +328,7 @@
+     PrimBuffView* pb;
+     f32 rate;
+ 
+-    if (max == 0) {
++    if (max == 0 || pG->prim_cnt == 0) {
+         return;
+     }
+     pb = (PrimBuffView*) &pG->gxStage;
+--- a/src/game/dvd.cpp
++++ b/src/game/dvd.cpp
+@@ -295,7 +295,7 @@
+ #undef OS_BUS_CLOCK
+ #undef OS_TIMER_CLOCK
+ #undef OSTicksToMilliseconds
+-#define OS_BUS_CLOCK (((OSLowMem*) 0x80000000)->busClock)
++#define OS_BUS_CLOCK (((OSLowMem*) RE4_GC(0x80000000))->busClock)
+ #define OS_TIMER_CLOCK (OS_BUS_CLOCK / 4)
+ #define OSTicksToMilliseconds(ticks) ((ticks) / (OS_TIMER_CLOCK / 1000))
+ 
+@@ -322,8 +322,8 @@
+ extern "C" void re4_swap32_words(void* p, u32 bytes);  /* port: runtime/byte_order.cpp */
+ extern "C" int re4_dvd_header_check(const void* table, const char* name, u32 offset, u32 length, int depth);  /* port: runtime/dvd.cpp */
+ 
+-#define DVD_BUFF ((void*) 0x80350000)
+-#define DVD_BUFF2 ((void*) 0x80360000)
++#define DVD_BUFF ((void*) RE4_GC(0x80350000))
++#define DVD_BUFF2 ((void*) RE4_GC(0x80360000))
+ 
+ // status field of cDvdQueue::flag
+ enum {
+@@ -1189,7 +1189,7 @@
+     ReadID = 1;
+     OSReport("FST Address = 0x%8x\n", DVDGetFSTLocation());
+     size = OSGetConsoleSimulatedMemSize();
+-    fst = (u32) DVDGetFSTLocation() - 0x80000000;
++    fst = (u32) DVDGetFSTLocation() - RE4_MEM1_BASE;
+     FstSize = size - fst;
+ }
+ 
+@@ -2025,9 +2025,9 @@
+ void RomFontSetting()
+ {
+     if (OSGetFontEncode() == 1) {
+-        pG->FontData = (void*) 0x816D3100;
++        pG->FontData = (void*) RE4_GC(0x816D3100);
+     } else {
+-        pG->FontData = (void*) 0x817D3EE0;
++        pG->FontData = (void*) RE4_GC(0x817D3EE0);
+     }
+     OSInitFont((OSFontHeader*) pG->FontData);
+ }
+--- a/src/game/eff_sys.cpp
++++ b/src/game/eff_sys.cpp
+@@ -554,7 +554,7 @@
+     if (tpl == NULL) {
+         return;
+     }
+-    if ((s32) tpl->descriptorArray < 0) {
++    if (RE4_IS_ADDR(tpl->descriptorArray)) {
+         return;
+     }
+     tpl->descriptorArray = (TEXDescriptor*) ((u32) tpl->descriptorArray + (u32) tpl);
+--- a/src/game/em.cpp
++++ b/src/game/em.cpp
+@@ -232,7 +232,7 @@
+ // runs the work's push() cleanup and returns it to the pool.
+ void cEmMgr::destroy(cEm* pEm)
+ {
+-    if ((u32) pEm < 0x80000000 || (u32) pEm > 0x82FFFFFF || !pEm->isAlive()) {
++    if ((u32) pEm < RE4_MEM1_BASE || (u32) pEm > RE4_GC(0x82FFFFFF) || !pEm->isAlive()) {
+         pLog->err(0, 0, "cEmMgr::destroy() WORK IS ALREADY DEAD. %08X", pEm);
+         return;
+     }
+--- a/src/game/esp3f.cpp
++++ b/src/game/esp3f.cpp
+@@ -117,7 +117,7 @@
+         cEsp3fBuf* b = (cEsp3fBuf*)w->pBuf[buf];
+         Vec* vp = b->vec;
+         ret = &vp[idx % per];
+-        if ((int)ret < 0) {
++        if (RE4_IS_ADDR(ret)) {
+             return ret;
+         }
+     }
+--- a/src/game/Espgen42.cpp
++++ b/src/game/Espgen42.cpp
+@@ -513,7 +513,7 @@
+     if (tex == NULL) {
+         return;
+     }
+-    noise = (u8*) GXGetTexObjData(tex) + 0x80000000;
++    noise = (u8*) GXGetTexObjData(tex) + RE4_MEM1_BASE;
+     u32 nx = p->Width;
+     u32 ny = p->Height;
+     f32 hx = (f32) (int) (nx / 2);
+--- a/src/game/espgen45.cpp
++++ b/src/game/espgen45.cpp
+@@ -185,7 +185,7 @@
+     if (tex == NULL) {
+         return;
+     }
+-    noise = (u8*) GXGetTexObjData(tex) + 0x80000000;
++    noise = (u8*) GXGetTexObjData(tex) + RE4_MEM1_BASE;
+     u32 nx = p->Width;
+     f32 hx = (f32) (int) (nx / 2);
+     f32 hy = (f32) (int) (p->Height / 2);
+--- a/src/game/event.cpp
++++ b/src/game/event.cpp
+@@ -154,7 +154,7 @@
+     u32 i;
+     int j;
+ 
+-    if ((int) data >= 0) {
++    if (!RE4_IS_ADDR(data)) {
+         pLog->err(0, 0, "Event::init : non addr");
+         return 0;
+     }
+@@ -2532,7 +2532,7 @@
+     if (ppEvt != 0) {
+         *ppEvt = 0;
+     }
+-    if ((int) hdr >= 0) {
++    if (!RE4_IS_ADDR(hdr)) {
+         pLog->err(0, 0, "EventMgr::SetEvs : non addr[%x]", hdr);
+         return 0;
+     }
+@@ -2651,7 +2651,7 @@
+ // Registers a named data block (model/motion/camera/... file) for the event packets.
+ int EventMgr::SetBin(char* nm, void* data, void* dat2, int flag)
+ {
+-    if ((int) data >= 0) {
++    if (!RE4_IS_ADDR(data)) {
+         pLog->err(0, 0, "EventMgr::SetBin : non addr[%s]", nm);
+         return 0;
+     }
+@@ -2712,7 +2712,7 @@
+     EvtBinEntry* e;
+     int i;
+ 
+-    if ((int) hdr >= 0) {
++    if (!RE4_IS_ADDR(hdr)) {
+         pLog->err(0, 0, "EventMgr::SetEvd : non addr[%s]", nm);
+         return 0;
+     }
+@@ -2885,7 +2885,7 @@
+     u8* p;
+     int i;
+ 
+-    if ((int) hdr >= 0) {
++    if (!RE4_IS_ADDR(hdr)) {
+         pLog->err(0, 0, "EventMgr::SetEvs : non addr");
+         return 0;
+     }
+--- a/src/game/exception.cpp
++++ b/src/game/exception.cpp
+@@ -289,13 +289,13 @@
+     }
+     if (SubScreenWk.p_module) {
+         OSModuleHeader* mod = SubScreenWk.p_module;
+-        if ((s32) mod < 0 && (u32) mod <= 0x82FFFFFF && (s32) mod->info.sectionInfoOffset < 0) {
++        if (RE4_IN_MEM1(mod) && RE4_IS_ADDR(mod->info.sectionInfoOffset)) {
+             symbol_err = excepLoadSymbolSub("Bio4.Sscrn.sym", mod);
+         }
+     }
+     if (RoomData.getModulePtr()) {
+         OSModuleHeader* mod = RoomData.getModulePtr();
+-        if ((s32) mod < 0 && (u32) mod <= 0x82FFFFFF && (s32) mod->info.sectionInfoOffset < 0) {
++        if (RE4_IN_MEM1(mod) && RE4_IS_ADDR(mod->info.sectionInfoOffset)) {
+             strcpy(buf, FileTbl[RoomData.m_RelNo].name + 4);
+             *strchr(buf, '.') = 0;
+             sprintf(tmp_str, "Bio4.%s.sym", buf);
+@@ -366,12 +366,12 @@
+             w->mode++;
+         }
+         if (Joy[0].rep & 0x80008) {
+-            if (w->addr > 0x80000000) {
++            if (w->addr > RE4_MEM1_BASE) {
+                 w->addr -= 0x10;
+             }
+         }
+         if (Joy[0].rep & 0x40004) {
+-            if (w->addr <= 0x817FFFEF) {
++            if (w->addr <= RE4_GC(0x817FFFEF)) {
+                 w->addr += 0x10;
+             }
+         }
+@@ -400,7 +400,7 @@
+         eprintf(index * 8 + x + 0x190, y + 0x10, 2, 0, "%1X", wk);
+         if (Joy[0].trg & 0x100) {
+             w->mode = 0;
+-            if ((addr & ~0xF) >= 0x80000000 && (addr & ~0xF) <= 0x817FFFF0) {
++            if ((addr & ~0xF) >= RE4_MEM1_BASE && (addr & ~0xF) <= RE4_GC(0x817FFFF0)) {
+                 w->addr = addr & ~0xF;
+                 w->curAddr = addr;
+             }
+@@ -423,7 +423,7 @@
+     p = (u8*) w->addr;
+     switch (w->width) {
+     case 0:
+-        for (i = 0; i < 16 && (u32) p <= 0x817FFFFF; i++) {
++        for (i = 0; i < 16 && (u32) p <= RE4_GC(0x817FFFFF); i++) {
+             eprintf(x + 0xF0, y + 0x20 + i * 0x10, 0, 0,
+                     "%08X: %02X %02X %02X %02X %02X %02X %02X %02X  %02X %02X %02X %02X %02X %02X %02X %02X", p,
+                     p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11], p[12], p[13], p[14],
+@@ -432,7 +432,7 @@
+         }
+         break;
+     case 1:
+-        for (i = 0; i < 16 && (u32) p <= 0x817FFFFF; i++) {
++        for (i = 0; i < 16 && (u32) p <= RE4_GC(0x817FFFFF); i++) {
+             u16* h = (u16*) p;
+             eprintf(x + 0xF0, y + 0x20 + i * 0x10, 0, 0, "%08X: %04X %04X %04X %04X %04X %04X %04X %04X", p, h[0],
+                     h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+@@ -440,7 +440,7 @@
+         }
+         break;
+     case 2:
+-        for (i = 0; i < 16 && (u32) p <= 0x817FFFFF; i++) {
++        for (i = 0; i < 16 && (u32) p <= RE4_GC(0x817FFFFF); i++) {
+             u32* l = (u32*) p;
+             eprintf(x + 0xF0, y + 0x20 + i * 0x10, 0, 0, "%08X: %08X %08X %08X %08X", p, l[0], l[1], l[2], l[3]);
+             p += 0x10;
+@@ -543,8 +543,8 @@
+         } while (sp != 0 && sp != (u32*) -1 && i < 16);
+     }
+     nSymbolInfo = 0;
+-    w->addr = 0x80400000;
+-    w->curAddr = 0x80400000;
++    w->addr = RE4_GC(0x80400000);
++    w->curAddr = RE4_GC(0x80400000);
+     pG->debug_mode = 1;
+     excepRegConsoleDump(error, dsisr, dar);
+     systemVISetBlack(0);
+--- a/src/game/file.cpp
++++ b/src/game/file.cpp
+@@ -9,7 +9,7 @@
+ #include <dolphin/os.h>
+ 
+ static int usb_fd = -1;
+-static void* usb_buf = (void*) 0x81800000;
++static void* usb_buf = (void*) RE4_GC(0x81800000);
+ static int usb_size = 0;
+ static int usb_pos = 0;
+ 
+--- a/src/game/game.cpp
++++ b/src/game/game.cpp
+@@ -1310,14 +1310,14 @@
+ {
+     if (SysFlagChk(pG, SYS_DOORDEMO)) {
+         MemReplaceHeap(3, 4);
+-        MemorySwap((void*) 0x807EC000, (void*) ARAM_FREE_BASE, 0x188000);
+-        memclr_asm((void*) 0x807EC000, 0x188000);
+-        MemCreateHeap(10, (void*) 0x807EC000, (void*) 0x80974000);
++        MemorySwap((void*) RE4_GC(0x807EC000), (void*) ARAM_FREE_BASE, 0x188000);
++        memclr_asm((void*) RE4_GC(0x807EC000), 0x188000);
++        MemCreateHeap(10, (void*) RE4_GC(0x807EC000), (void*) RE4_GC(0x80974000));
+         MemSetCurrentHeap(10);
+     } else {
+         if (SysFlagChk(pG, SYS_DOOR_AFTER)) {
+             MemDestroyHeap(10);
+-            MemorySwap((void*) 0x807EC000, (void*) ARAM_FREE_BASE, 0x188000);
++            MemorySwap((void*) RE4_GC(0x807EC000), (void*) ARAM_FREE_BASE, 0x188000);
+         } else {
+             MemReplaceHeap(3, 4);
+         }
+@@ -1551,7 +1551,7 @@
+         pG->nPrim = pG->nPrim / 2;
+ #line 2215 "D:/Bio4/Prog/game.cpp"
+         (pG->prim_cnt = (s32) MEM_ALLOC(pG->nPrim * 2, 1, 13));
+-        if ((u32) pG->prim_cnt < 0x80000000 || (u32) pG->prim_cnt > 0x82FFFFFF) {
++        if ((u32) pG->prim_cnt < RE4_MEM1_BASE || (u32) pG->prim_cnt > RE4_GC(0x82FFFFFF)) {
+             pLog->err(0, 0, "workInit() PRIM BUFFER SIZE WAS REDUCE %08X", pG->nPrim);
+         }
+     } while (pG->prim_cnt == 0);
+@@ -1859,7 +1859,7 @@
+     u32 n;
+     u32 i;
+ 
+-    if ((u32) pArray < 0x80000000 || (u32) pArray > 0x82FFFFFF) {
++    if ((u32) pArray < RE4_MEM1_BASE || (u32) pArray > RE4_GC(0x82FFFFFF)) {
+         return 0;
+     }
+     n = 0;
+--- a/src/game/libgpu.cpp
++++ b/src/game/libgpu.cpp
+@@ -34,11 +34,11 @@
+     }
+     do {
+         u32* p = (u32*) *pOt;
+-        if ((s32) *pOt < 0 && p == pWk) {
++        if (RE4_OT_IS_PRIM(*pOt) && p == pWk) {
+             *pOt = *p;
+             return;
+         }
+-        pOt = (u32*) (*pOt | 0x80000000);
++        pOt = (u32*) RE4_OT_PTR(*pOt);
+     } while (*pOt != 0xFFFFFFFF);
+ }
+ 
+@@ -49,7 +49,7 @@
+ 
+     *pOt = 0xFFFFFFFF;
+     for (i = 0; i < n - 1; i++) {
+-        pOt[1] = (u32) pOt & 0x7FFFFFFF;
++        pOt[1] = RE4_OT_LINK(pOt);
+         pOt++;
+     }
+ }
+@@ -86,10 +86,10 @@
+     }
+     do {
+         u32* p = (u32*) *pOt;
+-        if ((s32) p < 0) {
++        if (RE4_OT_IS_PRIM(p)) {
+             tbl[p[1] & 0x1F]((u32) p);
+         }
+-        pOt = (u32*) (*pOt | 0x80000000);
++        pOt = (u32*) RE4_OT_PTR(*pOt);
+     } while (*pOt != 0xFFFFFFFF);
+ }
+ 
+--- a/src/game/light.cpp
++++ b/src/game/light.cpp
+@@ -24,7 +24,7 @@
+ extern f32 lod_bias;
+ 
+ // pointer to game memory (0x80000000 .. 0x82FFFFFF)
+-#define IN_RANGE(p) ((u32) (p) - 0x80000000 <= 0x02FFFFFF)
++#define IN_RANGE(p) RE4_IN_MEM1(p)
+ 
+ void funcDelCtrl(cCtrl* pCtr);
+ 
+--- a/src/game/main_mem.cpp
++++ b/src/game/main_mem.cpp
+@@ -89,20 +89,20 @@
+ // tagged "_reset_keep_" that survives soft resets).
+ void SystemMemInit()
+ {
+-    SysMem.Heap_end_addr = 0x817F4000;
+-    SysMem.Dvdread_addr = 0x80350000;
+-    SysMem.Sound_addr = 0x80370000;
+-    SysMem.Fifo_addr = 0x803F0000;
+-    SysMem.Xfb_addr = 0x80460000;
+-    SysMem.Core_addr = 0x80578000;
+-    SysMem.Option_addr = 0x807AC000;
+-    SysMem.Player_addr = 0x807EC000;
+-    SysMem.Weapon_addr = 0x80904000;
+-    SysMem.Heap_addr = 0x80974000;
+-    SysMem.Debug_usb_addr = 0x81800000;
+-    SysMem.Debug_addr = 0x8181FB00;
++    SysMem.Heap_end_addr = RE4_GC(0x817F4000);
++    SysMem.Dvdread_addr = RE4_GC(0x80350000);
++    SysMem.Sound_addr = RE4_GC(0x80370000);
++    SysMem.Fifo_addr = RE4_GC(0x803F0000);
++    SysMem.Xfb_addr = RE4_GC(0x80460000);
++    SysMem.Core_addr = RE4_GC(0x80578000);
++    SysMem.Option_addr = RE4_GC(0x807AC000);
++    SysMem.Player_addr = RE4_GC(0x807EC000);
++    SysMem.Weapon_addr = RE4_GC(0x80904000);
++    SysMem.Heap_addr = RE4_GC(0x80974000);
++    SysMem.Debug_usb_addr = RE4_GC(0x81800000);
++    SysMem.Debug_addr = RE4_GC(0x8181FB00);
+     SysMem.Elf_end_addr = (u32) OSGetArenaLo();
+-    if (SysMem.Elf_end_addr > 0x8034FFFF) {
++    if (SysMem.Elf_end_addr > RE4_GC(0x8034FFFF)) {
+         OSReport("ELF size overflow\n");
+ #line 100 "D:/Bio4/Prog/main_mem.cpp"
+         HALT();
+@@ -647,7 +647,7 @@
+         y1 = (u32) ((f32) ((u32) cell + cell->size - start) * 400.0f / (f32) size) + 1;
+ 
+         u8* tag = (u8*) cell + cell->size - 0x20;
+-        if ((s32) tag >= 0 || (u32) tag > 0x82FFFFFF) {
++        if (!RE4_IN_MEM1(tag)) {
+             break;
+         }
+         if (MEM_TAG_OK(tag)) {
+@@ -661,7 +661,7 @@
+         ey += 14;
+         next = cell->next;
+         if (next != NULL && next->next != NULL &&
+-            ((s32) next->next >= 0 || (u32) next->next > 0x82FFFFFF)) {
++            (!RE4_IN_MEM1(next->next))) {
+             pLog->err(0, 0, "heap next err:%-18s %6x %08x", tag + 4, cell->size - 0x20, cell);
+             pLog->err(0, 0, "next addr    : %08x", cell->next);
+ #line 770
+@@ -723,7 +723,7 @@
+     if (CurrentHeap == 4) {
+         for (cell = cell_dll; cell != NULL; cell = cell->next) {
+             u8* tag = (u8*) cell + cell->size - 0x20;
+-            if ((s32) tag >= 0 || (u32) tag > 0x82FFFFFF) {
++            if (!RE4_IN_MEM1(tag)) {
+                 break;
+             }
+             if (MEM_TAG_OK(tag)) {
+@@ -737,7 +737,7 @@
+             }
+             next = cell->next;
+             if (next != NULL && next->next != NULL &&
+-                ((s32) next->next >= 0 || (u32) next->next > 0x82FFFFFF)) {
++                (!RE4_IN_MEM1(next->next))) {
+                 pLog->err(0, 0, "heap next err:%-18s %6x %08x", tag + 4, cell->size - 0x20, cell);
+                 pLog->err(0, 0, "next addr    : %08x", cell->next);
+ #line 870
+@@ -746,7 +746,7 @@
+         }
+         for (cell = cell_stage; cell != NULL; cell = cell->next) {
+             u8* tag = (u8*) cell + cell->size - 0x20;
+-            if ((s32) tag >= 0 || (u32) tag > 0x82FFFFFF) {
++            if (!RE4_IN_MEM1(tag)) {
+                 break;
+             }
+             if (MEM_TAG_OK(tag)) {
+@@ -760,7 +760,7 @@
+             }
+             next = cell->next;
+             if (next != NULL && next->next != NULL &&
+-                ((s32) next->next >= 0 || (u32) next->next > 0x82FFFFFF)) {
++                (!RE4_IN_MEM1(next->next))) {
+                 pLog->err(0, 0, "heap next err:%-18s %6x %08x", tag + 4, cell->size - 0x20, cell);
+                 pLog->err(0, 0, "next addr    : %08x", cell->next);
+ #line 904
+@@ -769,7 +769,7 @@
+         }
+         for (cell = cell_game; cell != NULL; cell = cell->next) {
+             u8* tag = (u8*) cell + cell->size - 0x20;
+-            if ((s32) tag >= 0 || (u32) tag > 0x82FFFFFF) {
++            if (!RE4_IN_MEM1(tag)) {
+                 break;
+             }
+             if (MEM_TAG_OK(tag)) {
+@@ -783,7 +783,7 @@
+             ey += 14;
+             next = cell->next;
+             if (next != NULL && next->next != NULL &&
+-                ((s32) next->next >= 0 || (u32) next->next > 0x82FFFFFF)) {
++                (!RE4_IN_MEM1(next->next))) {
+                 pLog->err(0, 0, "heap next err:%-18s %6x %08x", tag + 4, cell->size - 0x20, cell);
+                 pLog->err(0, 0, "next addr    : %08x", cell->next);
+ #line 938
+@@ -792,7 +792,7 @@
+         }
+         for (cell = cell_main; cell != NULL; cell = cell->next) {
+             u8* tag = (u8*) cell + cell->size - 0x20;
+-            if ((s32) tag >= 0 || (u32) tag > 0x82FFFFFF) {
++            if (!RE4_IN_MEM1(tag)) {
+                 break;
+             }
+             if (MEM_TAG_OK(tag)) {
+@@ -806,7 +806,7 @@
+             ey += 14;
+             next = cell->next;
+             if (next != NULL && next->next != NULL &&
+-                ((s32) next->next >= 0 || (u32) next->next > 0x82FFFFFF)) {
++                (!RE4_IN_MEM1(next->next))) {
+                 pLog->err(0, 0, "heap next err:%-18s %6x %08x", tag + 4, cell->size - 0x20, cell);
+                 pLog->err(0, 0, "next addr    : %08x", cell->next);
+ #line 974
+--- a/src/game/main_sub.cpp
++++ b/src/game/main_sub.cpp
+@@ -39,7 +39,7 @@
+ #undef OS_TIMER_CLOCK
+ #undef OSTicksToSeconds
+ #undef OSTicksToMicroseconds
+-#define OS_BUS_CLOCK (((OSLowMem*) 0x80000000)->busClock)
++#define OS_BUS_CLOCK (((OSLowMem*) RE4_GC(0x80000000))->busClock)
+ #define OS_TIMER_CLOCK (OS_BUS_CLOCK / 4)
+ #define OSTicksToSeconds(ticks) ((ticks) / OS_TIMER_CLOCK)
+ #define OSTicksToMicroseconds(ticks) (((ticks) * 8) / (OS_TIMER_CLOCK / 125000))
+@@ -96,10 +96,10 @@
+     GXRenderModeObj* rm = &Rmode;
+ 
+     SetTvMode(rm);
+-    pFrame_buff[0] = (void*) 0x80460000;
++    pFrame_buff[0] = (void*) RE4_GC(0x80460000);
+     pCurrent_buff = pFrame_buff[1] =
+-        (void*) (0x80460000 + VIPadFrameBufferWidth(rm->viWidth) * rm->xfbHeight * 2);
+-    DefaultFifo = (void*) 0x803F0000;
++        (void*) (RE4_GC(0x80460000) + VIPadFrameBufferWidth(rm->viWidth) * rm->xfbHeight * 2);
++    DefaultFifo = (void*) RE4_GC(0x803F0000);
+     VIConfigure(rm);
+     DefaultFifoObj = GXInit(DefaultFifo, 0x70000);
+     ScreenGXSet();
+@@ -455,14 +455,14 @@
+     CLUTHeader* clut;
+     u32 addr = (u32) tpl;
+ 
+-    if (addr < 0x80000000 || addr > 0x82FFFFFF) {
++    if (addr < RE4_MEM1_BASE || addr > RE4_GC(0x82FFFFFF)) {
+         return;
+     }
+     desc = (TEXDescriptor*) (tpl + 1);
+     if (!VALID_PTR(desc)) {
+         return;
+     }
+-    if ((s32) desc->textureHeader >= 0) {
++    if (!RE4_IS_ADDR(desc->textureHeader)) {
+         desc->textureHeader = (TEXHeader*) ((u8*) tpl + (u32) desc->textureHeader);
+         if (!VALID_PTR(desc->textureHeader)) {
+             return;
+@@ -470,12 +470,12 @@
+         desc->CLUTHeader = (CLUTHeader*) ((u8*) tpl + (u32) desc->CLUTHeader);
+         desc->textureHeader->data = (u8*) tpl + (u32) desc->textureHeader->data;
+         desc->CLUTHeader->data = (u8*) tpl + (u32) desc->CLUTHeader->data;
+-        if ((s32) desc->textureHeader >= 0) {
++        if (!RE4_IS_ADDR(desc->textureHeader)) {
+             return;
+         }
+     }
+     hdr = desc->textureHeader;
+-    if ((u32) hdr > 0x82FFFFFF) {
++    if ((u32) hdr > RE4_GC(0x82FFFFFF)) {
+         return;
+     }
+     if (hdr->format - 8 <= 1) {
+--- a/src/game/mes.cpp
++++ b/src/game/mes.cpp
+@@ -177,7 +177,7 @@
+     FONT_TEX* t;
+ 
+     m_tpl = addr;
+-    if ((s32) addr->descriptorArray >= 0) {
++    if (!RE4_IS_ADDR(addr->descriptorArray)) {
+         addr->descriptorArray = (TEXDescriptor*) ((u32) addr->descriptorArray + (u32) addr);
+         d = addr->descriptorArray;
+         for (i = 0; i < addr->numDescriptors; i++, d++) {
+--- a/src/game/model.cpp
++++ b/src/game/model.cpp
+@@ -935,7 +935,7 @@
+ {
+     u8* base = (u8*) d;
+ 
+-    if ((int) d->pClr < 0) {
++    if (RE4_IS_ADDR(d->pClr)) {
+         return;
+     }
+     d->pClr = base + (u32) d->pClr;
+@@ -964,7 +964,7 @@
+ {
+     u8* base = (u8*) d;
+ 
+-    if ((int) d->pClr >= 0) {
++    if (!RE4_IS_ADDR(d->pClr)) {
+         return;
+     }
+     d->pClr = (void*) ((u8*) d->pClr - base);
+@@ -989,7 +989,7 @@
+ {
+     cModelData* d = (cModelData*) addr;
+ 
+-    if ((int) d->pClr >= 0) {
++    if (!RE4_IS_ADDR(d->pClr)) {
+         calcModelAddr(d);
+     }
+     d->pClr = (u8*) d->pClr + ofs;
+@@ -1017,7 +1017,7 @@
+     if (tpl == NULL) {
+         return;
+     }
+-    if ((int) tpl->descriptorArray < 0) {
++    if (RE4_IS_ADDR(tpl->descriptorArray)) {
+         return;
+     }
+     tpl->descriptorArray = (TEXDescriptor*) ((u32) tpl->descriptorArray + (u32) tpl);
+@@ -1037,7 +1037,7 @@
+ {
+     u32 i;
+ 
+-    if ((int) tpl->descriptorArray >= 0) {
++    if (!RE4_IS_ADDR(tpl->descriptorArray)) {
+         return;
+     }
+     for (i = 0; i < tpl->numDescriptors; i++) {
+@@ -1058,7 +1058,7 @@
+     TEXPalette* tpl = (TEXPalette*) p;
+     u32 i;
+ 
+-    if ((int) tpl->descriptorArray >= 0) {
++    if (!RE4_IS_ADDR(tpl->descriptorArray)) {
+         calcTplAddr(tpl);
+     }
+     tpl->descriptorArray = (TEXDescriptor*) ((u8*) tpl->descriptorArray + ofs);
+--- a/src/game/motion.cpp
++++ b/src/game/motion.cpp
+@@ -220,7 +220,7 @@
+     tbl = (u32*) ((u32) w->pJoint_no + w->Joint_num);
+     tbl = (u32*) (((u32) tbl + 3) & ~3);
+     tbl++;
+-    if ((s32) tbl[0] >= 0) {
++    if (!RE4_IS_ADDR(tbl[0])) {
+         for (i = 0; i < w->Joint_num; i++) {
+             tbl[i] += (u32) w->pMot;
+         }
+--- a/src/game/player.cpp
++++ b/src/game/player.cpp
+@@ -204,7 +204,7 @@
+     stat.reset();
+     pPL = this;
+     hp = pG->pl_life;
+-    subArc = (PlArc*)0x807EC000;
++    subArc = (PlArc*)RE4_GC(0x807EC000);
+     m_MotTbl = (void**) PL_MEM_ALLOC(0x1B4, 373);
+     memclr_asm(m_MotTbl, 0x1B4);
+     m_MotTbl2 = (void**) PL_MEM_ALLOC(0x30, 376);
+--- a/src/game/pl_class.cpp
++++ b/src/game/pl_class.cpp
+@@ -44,7 +44,7 @@
+ u32 upDownCk(cPlayer* pl);
+ 
+ // cPlNeck's checks compile to the folded `addis 0x8000; cmplwi 0x02FFFFFF` range form.
+-#define VALID_PTR2(p) ((u32) (p) - 0x80000000 <= 0x02FFFFFF || re4_valid_port_ptr((const void*) (p))) /* port: patch 0037 */
++#define VALID_PTR2(p) (RE4_IN_MEM1(p) || re4_valid_port_ptr((const void*) (p))) /* port: patch 0037 */
+ 
+ 
+ 
+--- a/src/game/read.cpp
++++ b/src/game/read.cpp
+@@ -89,12 +89,12 @@
+ 
+ #define READ_BUFF_OFS 0x142800
+ #define ROOM_ARC_SIZE 0x300000
+-#define CORE_DATA_ADDR ((void*) 0x80578000)
++#define CORE_DATA_ADDR ((void*) RE4_GC(0x80578000))
+ #define CORE_DATA_MAX 0x234000
+-#define OPTION_DATA_ADDR ((void*) 0x807AC000)
++#define OPTION_DATA_ADDR ((void*) RE4_GC(0x807AC000))
+ #define OPTION_DATA_MAX 0x40000
+-#define PL_DATA_ADDR 0x807EC000
+-#define WEP_DATA_ADDR ((void*) 0x80904000)
++#define PL_DATA_ADDR RE4_GC(0x807EC000)
++#define WEP_DATA_ADDR ((void*) RE4_GC(0x80904000))
+ #define WEP_DATA_MAX 0x70000
+ #define DLL_BSS_MAX 0x80
+ 
+--- a/src/game/room_jmp.cpp
++++ b/src/game/room_jmp.cpp
+@@ -85,7 +85,7 @@
+             if (info == 0) {
+                 continue;
+             }
+-            if ((u32) info->name >= 0x80000000 && (u32) info->name <= 0x82FFFFFF) {
++            if ((u32) info->name >= RE4_MEM1_BASE && (u32) info->name <= RE4_GC(0x82FFFFFF)) {
+                 return;
+             }
+             info->name = (char*) ((u32) tbl + (u32) info->name);
+--- a/src/game/sce_at.cpp
++++ b/src/game/sce_at.cpp
+@@ -331,8 +331,8 @@
+     u32 v;
+ 
+     while ((v = p->tag) != 0xFFFFFFFF) {
+-        p = (SCE_AT_DATA*) (v | 0x80000000);
+-        if ((s32) v < 0) {
++        p = (SCE_AT_DATA*) RE4_OT_PTR(v);
++        if (RE4_OT_IS_PRIM(v)) {
+             return p;
+         }
+     }
+--- a/src/game/sce_sys.cpp
++++ b/src/game/sce_sys.cpp
+@@ -149,8 +149,8 @@
+     u32 tag;
+ 
+     while ((tag = pSceOt->tag) != 0xFFFFFFFF) {
+-        pSceOt = (SCE_TASK*) (tag | 0x80000000);
+-        if ((s32) tag < 0) {
++        pSceOt = (SCE_TASK*) RE4_OT_PTR(tag);
++        if (RE4_OT_IS_PRIM(tag)) {
+             return pSceOt;
+         }
+     }
+@@ -461,8 +461,8 @@
+         return;
+     }
+     do {
+-        c = (SCE_EXEC_PRIM*) (v | 0x80000000);
+-        if ((s32) v < 0) {
++        c = (SCE_EXEC_PRIM*) RE4_OT_PTR(v);
++        if (RE4_OT_IS_PRIM(v)) {
+             if (SceExecCheckCondition_sub(c) == 1) {
+                 if (c->func != 0) {
+                     SceExec(c->level, c->func, c->param, c->kind, SCE_PRIO_DEF_2, 0);
+--- a/src/game/scroll.cpp
++++ b/src/game/scroll.cpp
+@@ -308,7 +308,7 @@
+         pLog->err(0, 0, "SmdInit() SMX WORK NUM ERR %d", w->ModelNo);
+         return;
+     }
+-    if ((u32) obj < 0x80000000 || (u32) obj > 0x82FFFFFF || !obj->isAlive()) {
++    if ((u32) obj < RE4_MEM1_BASE || (u32) obj > RE4_GC(0x82FFFFFF) || !obj->isAlive()) {
+         pLog->err(0, 0, "SmdInit() SMX UNUSED cObj SELECT %d", w->ModelNo);
+         return;
+     }
+@@ -379,7 +379,7 @@
+         idx = 0;
+     }
+     obj = scrObjTbl[idx];
+-    if ((u32) obj < 0x80000000 || (u32) obj > 0x82FFFFFF) {
++    if ((u32) obj < RE4_MEM1_BASE || (u32) obj > RE4_GC(0x82FFFFFF)) {
+         if (DbgFlagChk(pG, DBG_TEST_MODE)) {
+             if (!DbgFlagChk(pG, DBG_EVENT_TOOL)) {
+                 return NULL;
+@@ -456,7 +456,7 @@
+     u32 addr;
+     int i;
+ 
+-    if ((u32) w < 0x80000000 || (u32) w > 0x82FFFFFF) {
++    if ((u32) w < RE4_MEM1_BASE || (u32) w > RE4_GC(0x82FFFFFF)) {
+         pLog->err(0, 0, "cSmd::slide(%d) PTR ERROR", offset);
+         return;
+     }
+@@ -471,7 +471,7 @@
+         u32 base = (u32) this + BinTblOfs;
+         for (i = 0; i < nBin; i++) {
+             addr = base + ((u32*) base)[i];
+-            if (addr < 0x80000000 || addr > 0x82FFFFFF) {
++            if (addr < RE4_MEM1_BASE || addr > RE4_GC(0x82FFFFFF)) {
+                 pLog->err(0, 0, "cSmd::slide() PTR ERR %08X", addr);
+                 return;
+             }
+@@ -571,7 +571,7 @@
+         idx = 0;
+     }
+     obj = scrObjTbl[idx];
+-    if ((u32) obj < 0x80000000 || (u32) obj > 0x82FFFFFF) {
++    if ((u32) obj < RE4_MEM1_BASE || (u32) obj > RE4_GC(0x82FFFFFF)) {
+         if (DbgFlagChk(pG, DBG_TEST_MODE)) {
+             if (!DbgFlagChk(pG, DBG_EVENT_TOOL)) {
+                 goto ng;
+@@ -614,7 +614,7 @@
+ {
+     cObj* obj = SmdGetGroupObjPtr(idx);
+ 
+-    if ((u32) obj < 0x80000000 || (u32) obj > 0x82FFFFFF) {
++    if ((u32) obj < RE4_MEM1_BASE || (u32) obj > RE4_GC(0x82FFFFFF)) {
+         pLog->err(0, 0, "SmdSetTrans() INVALID INDEX %d", idx);
+         return;
+     }
+--- a/src/game/shadow.cpp
++++ b/src/game/shadow.cpp
+@@ -58,7 +58,7 @@
+         cLightInfo* li = &(m)->LightInfo;                                           \
+         if (li->PartsNo > 0) {                                                          \
+             cCoord* p = (m)->getPartsPtr(li->PartsNo - 1);                              \
+-            if ((u32) p < 0x80000000 || (u32) p > 0x82FFFFFF) {                     \
++            if ((u32) p < RE4_MEM1_BASE || (u32) p > RE4_GC(0x82FFFFFF)) {                     \
+                 pLog->err(0, 0, msg, LightInfoParts(&(m)->LightInfo));              \
+                 p = (m);                                                            \
+             }                                                                       \
+@@ -1183,7 +1183,7 @@
+     }
+     if (li->PartsNo > 0) {
+         cCoord* p = m->getPartsPtr(li->PartsNo - 1);
+-        if ((u32) p < 0x80000000 || (u32) p > 0x82FFFFFF) {
++        if ((u32) p < RE4_MEM1_BASE || (u32) p > RE4_GC(0x82FFFFFF)) {
+             pLog->err(0, 0, "shadowChkInFrustum() cCoord NO ERR %d", li->PartsNo);
+             p = m;
+         }
+--- a/src/game/shape.cpp
++++ b/src/game/shape.cpp
+@@ -202,7 +202,7 @@
+     w->idx = (u8*) w->data + (w->num * 2 + 3);
+     p = (s32*) (w->idx + w->num);
+     p = (s32*) (((u32) p + 3) & ~3);
+-    if (*++p >= 0) {
++    if (!RE4_IS_ADDR(*++p)) {
+         for (i = 0; i < w->num; i++) {
+             p[i] += (u32) w->data;
+         }
+--- a/src/game/snd.cpp
++++ b/src/game/snd.cpp
+@@ -28,7 +28,7 @@
+ 
+ 
+ #define SND_FILE "D:/Bio4/Prog/snd.cpp"
+-#define SND_DATA_TOP 0x80370000
++#define SND_DATA_TOP RE4_GC(0x80370000)
+ #define LOOP_IDX(x, max) ((x) < 0 ? (max) : ((x) > (max) ? 0 : (x)))
+ 
+ SND_WORK Snd;
+--- a/src/game/texture.cpp
++++ b/src/game/texture.cpp
+@@ -159,7 +159,7 @@
+     if (tpl == NULL) {
+         return;
+     }
+-    if ((s32) tpl->descriptorArray < 0) {
++    if (RE4_IS_ADDR(tpl->descriptorArray)) {
+         return;
+     }
+     tpl->descriptorArray = (TEXDescriptor*) ((u32) tpl->descriptorArray + (u32) tpl);
+--- a/src/game/trans.cpp
++++ b/src/game/trans.cpp
+@@ -81,8 +81,8 @@
+     u8 padding;      // 0x07
+ };
+ 
+-#define PTR_INVALID(p) ((s32) (p) >= 0 || (u32) (p) > 0x82FFFFFF)
+-#define PTR_INVALID2(p) ((u32) (p) - 0x80000000 > 0x02FFFFFF)
++#define PTR_INVALID(p) (!RE4_IN_MEM1(p))
++#define PTR_INVALID2(p) (!RE4_IN_MEM1(p))
+ 
+ // u8 -> f32 through GQR2 straight from memory: the compiler only emits psq_l from a stack slot.
+ /* port: C versions of the psq_l (re4_ppc.h) */
+@@ -2591,7 +2591,7 @@
+     if (tpl == 0) {
+         return;
+     }
+-    if ((s32) tpl->descriptorArray < 0) {
++    if (RE4_IS_ADDR(tpl->descriptorArray)) {
+         return;
+     }
+     tpl->descriptorArray = (TEXDescriptor*) ((u32) tpl->descriptorArray + (u32) tpl);
+--- a/src/game/trans_ot.cpp
++++ b/src/game/trans_ot.cpp
+@@ -81,7 +81,7 @@
+ {
+     OtPrim* p = (OtPrim*) GetPrimBuff(sizeof(OtPrim));
+ 
+-    if ((u32) p < 0x80000000 || (u32) p > 0x82FFFFFF) {
++    if ((u32) p < RE4_MEM1_BASE || (u32) p > RE4_GC(0x82FFFFFF)) {
+         return 0;
+     }
+     p->data = data;
+--- a/src/lib/GXDisplayList.c
++++ b/src/lib/GXDisplayList.c
+@@ -4,6 +4,7 @@
+ #include <dolphin/os.h>
+ 
+ #include "__gx.h"
++#include "re4_gx_fifo.h" /* port: patch 0151 */
+ 
+ static __GXFifoObj DisplayListFifo;
+ static volatile __GXFifoObj* OldCPUFifo;
+@@ -94,6 +95,6 @@
+     }
+ 
+     GX_WRITE_U8(GX_CMD_CALL_DL);
+-    GX_WRITE_U32(list);
++    GX_WRITE_U32(re4_gx_physical(list)); /* port: patch 0151, the 3DS layout */
+     GX_WRITE_U32(nbytes);
+ }
+--- a/src/lib/uty_tmr.c
++++ b/src/lib/uty_tmr.c
+@@ -86,5 +86,8 @@
+ 		utytmr_unit = 1;
+ 		return;
+ 	}
+-	utytmr_unit = (*(Uint32 *)0x800000F8) >> 2;
++#ifndef RE4_MEM1_BASE  /* port: patch 0151 */
++#define RE4_MEM1_BASE 0x80000000u
++#endif
++	utytmr_unit = (*(Uint32 *)(unsigned long)(RE4_MEM1_BASE + 0xF8u)) >> 2;
+ }
+--- a/src/Sscrn/ss_debug.cpp
++++ b/src/Sscrn/ss_debug.cpp
+@@ -420,7 +420,7 @@
+     u32 n;
+     u32 i;
+ 
+-    if ((u32) pArray < 0x80000000 || (u32) pArray > 0x82FFFFFF) {
++    if ((u32) pArray < RE4_MEM1_BASE || (u32) pArray > RE4_GC(0x82FFFFFF)) {
+         return 0;
+     }
+     n = 0;
+--- a/src/Sscrn/ss_item_draw.cpp
++++ b/src/Sscrn/ss_item_draw.cpp
+@@ -90,32 +90,32 @@
+     TEXHeader* th;
+ 
+     // main-memory range checks (the sub screen's data lives in the ARAM-swapped area)
+-    if ((u32) tpl - 0x80000000 > 0x02FFFFFF) {
++    if ((u32) tpl - RE4_MEM1_BASE > 0x02FFFFFF) {
+         return;
+     }
+     calcTplAddr(tpl);
+     d = TEXGet(tpl, id);
+-    if ((u32) d < 0x80000000) {
++    if ((u32) d < RE4_MEM1_BASE) {
+         return;
+     }
+-    if ((u32) d > 0x82FFFFFF) {
++    if ((u32) d > RE4_GC(0x82FFFFFF)) {
+         return;
+     }
+     th = d->textureHeader;
+-    if ((u32) th < 0x80000000) {
++    if ((u32) th < RE4_MEM1_BASE) {
+         return;
+     }
+-    if ((u32) th > 0x82FFFFFF) {
++    if ((u32) th > RE4_GC(0x82FFFFFF)) {
+         return;
+     }
+     if (th->format == 8 || th->format == 9) {
+         CLUTHeader* ch;
+         GXInitTexObjCI(&tex, th->data, th->width, th->height, th->format, 0, 0, 0, 0);
+         ch = d->CLUTHeader;
+-        if ((u32) ch < 0x80000000) {
++        if ((u32) ch < RE4_MEM1_BASE) {
+             return;
+         }
+-        if ((u32) ch > 0x82FFFFFF) {
++        if ((u32) ch > RE4_GC(0x82FFFFFF)) {
+             return;
+         }
+         GXInitTlutObj(&tlut, ch->data, ch->format, ch->numEntries);
+--- a/src/Sscrn/ss_map.cpp
++++ b/src/Sscrn/ss_map.cpp
+@@ -2080,7 +2080,7 @@
+     void* tpl;
+     void* bin;
+ 
+-    if ((int) wk->pMapObj >= 0) {
++    if (!RE4_IS_ADDR(wk->pMapObj)) {
+         wk->pMapObj = (u32*) ((u8*) wk->pMapObj + (u32) wk->pBuf);
+     }
+     m = wk->map;
+--- a/src/st3/r31b.cpp
++++ b/src/st3/r31b.cpp
+@@ -1037,7 +1037,7 @@
+     for (i = 0; i < n; i++) {
+         cObj* o = SmdGetGroupObjPtr(r31b_objTbl[no][i]);
+ 
+-        if ((u32) o < 0x80000000 || (u32) o > 0x82FFFFFF) {
++        if ((u32) o < RE4_MEM1_BASE || (u32) o > RE4_GC(0x82FFFFFF)) {
+             pLog->err(0, 0, "R31bExecFallMainSub INVALID INDEX %d", r31b_objTbl[no][i]);
+             return;
+         }
+@@ -1050,7 +1050,7 @@
+     for (i = 0; i < m; i++) {
+         cObj* o = SmdGetGroupObjPtr(r31b_kanaamiTbl[no][i]);
+ 
+-        if ((u32) o < 0x80000000 || (u32) o > 0x82FFFFFF) {
++        if ((u32) o < RE4_MEM1_BASE || (u32) o > RE4_GC(0x82FFFFFF)) {
+             pLog->err(0, 0, "R31bExecFallMainSub INVALID INDEX %d", r31b_objTbl[no][i]);
+             return;
+         }
+--- a/src/t_event/t_event.cpp
++++ b/src/t_event/t_event.cpp
+@@ -1044,7 +1044,7 @@
+ {
+     cLightTool* lt = pTl;
+ 
+-    if ((u32) lt >= 0x80000000 && (u32) lt <= 0x82FFFFFF) {
++    if ((u32) lt >= RE4_MEM1_BASE && (u32) lt <= RE4_GC(0x82FFFFFF)) {
+         if (lt->move() == 0) {
+             SubToolLightInit(this, 0);
+         }
+--- a/src/t_light/t_light.cpp
++++ b/src/t_light/t_light.cpp
+@@ -26,7 +26,7 @@
+     TutilInitDefault();
+     tool = new cLightTool;
+     Block.dispAllBlock(1);
+-    if ((u32) tool >= 0x80000000 && (u32) tool <= 0x82FFFFFF) {
++    if ((u32) tool >= RE4_MEM1_BASE && (u32) tool <= RE4_GC(0x82FFFFFF)) {
+         int ret;
+ 
+         DbgFlagOn(pG, DBG_BACK_CLIP);
+--- a/src/t_light/t_scroll.cpp
++++ b/src/t_light/t_scroll.cpp
+@@ -581,7 +581,7 @@
+     name = pWork->nameTbl[pWork->top + pWork->row];
+     // exits by goto: a `break` would let expand_end_loop rotate the range test to the bottom
+     while (1) {
+-        if ((u32) name >= 0x80000000 && (u32) name <= 0x82FFFFFF) {
++        if ((u32) name >= RE4_MEM1_BASE && (u32) name <= RE4_GC(0x82FFFFFF)) {
+             if (i >= 0) {
+                 eprintf(0x68, y, 0, 0, "%s", name);
+             }
+@@ -939,7 +939,7 @@
+         pWork->sub2 = 1;
+     }
+     eprintf(0x40, 0x8C, 4, 0, "MODEL PROPATY");
+-    if ((u32) LightMgr.at(pWork->id) >= 0x80000000 && (u32) LightMgr.at(pWork->id) <= 0x82FFFFFF &&
++    if ((u32) LightMgr.at(pWork->id) >= RE4_MEM1_BASE && (u32) LightMgr.at(pWork->id) <= RE4_GC(0x82FFFFFF) &&
+         (LightMgr.at(pWork->id)->be_flag & 1)) {
+         eprintf(0x40, 0x9A, 0, 0, "LIGHT-%02d %s", pWork->id,
+                 (obj->LightInfo.SelectMask & (1 << pWork->id)) ? "ENABLE" : "DISABLE");
+@@ -1488,7 +1488,7 @@
+     }
+     eprintf(0x20, 0x38, 0, 0, "NO %d", pWork->sub);
+     tpl = SmdGetTplPtr(pWork->sub);
+-    if ((u32) tpl - 0x80000000 <= 0x02FFFFFF) {
++    if ((u32) tpl - RE4_MEM1_BASE <= 0x02FFFFFF) {
+         DrawTpl((TEXPalette*) tpl, 0x32, 0x32, 0xC8, 0xC8);
+     }
+     if (pWork->joy[0].rep & 0x200) {
+@@ -1874,7 +1874,7 @@
+             // outranks `no+1` (10 refs/144) for r25. The codeless insn restores the count (39 vs 145).
+             asm("");
+             n = pWork->nameTbl[no];
+-            if ((u32) n >= 0x80000000 && (u32) n <= 0x82FFFFFF) {
++            if ((u32) n >= RE4_MEM1_BASE && (u32) n <= RE4_GC(0x82FFFFFF)) {
+                 strncpy(name, n, 7);
+             }
+             name[7] = 0;
+--- a/src/t_sce/t_sce_item.cpp
++++ b/src/t_sce/t_sce_item.cpp
+@@ -1159,7 +1159,7 @@
+         it->open_ang = pW->editArea.eye_trigger.open_ang;
+         it->ang_x = pW->editArea.eye_trigger.ang_x;
+         it->ang_y = pW->editArea.eye_trigger.ang_y;
+-        if (!((u32) it->pModel < 0x80000000 || (u32) it->pModel > 0x82FFFFFF)) {
++        if (!((u32) it->pModel < RE4_MEM1_BASE || (u32) it->pModel > RE4_GC(0x82FFFFFF))) {
+             if (it->open_ang > 0.0f) {
+                 it->pModel->ang.x = it->ang_x;
+                 it->pModel->ang.y = it->ang_y;
