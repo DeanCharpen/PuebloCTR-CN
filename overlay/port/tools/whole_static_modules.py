@@ -49,10 +49,11 @@ def run(cmd: list) -> str:
     return r.stdout
 
 
-def import_names(imports_dir: Path) -> set:
-    """Every name some module resolves in its siblings (kImportNames of imports/<mod>.cpp)."""
-    names = set()
+def import_names(imports_dir: Path) -> dict:
+    """Per module, the names it resolves in its siblings (kImportNames of imports/<mod>.cpp)."""
+    names = {}
     for f in imports_dir.glob("*.cpp"):
+        own = names.setdefault(f.stem, set())
         inside = False
         for line in f.read_text().splitlines():
             if line.startswith("static const char* const kImportNames"):
@@ -62,7 +63,7 @@ def import_names(imports_dir: Path) -> set:
             elif inside:
                 m = IMPORT_NAME.match(line)
                 if m and m.group(1):
-                    names.add(m.group(1))
+                    own.add(m.group(1))
     return names
 
 
@@ -108,7 +109,8 @@ def main() -> int:
     ap.add_argument("--ldscript", type=Path, help="write the linker script fragment for 3dsx.ld here")
     args = ap.parse_args()
 
-    lookups = import_names(args.imports)
+    imports = import_names(args.imports)
+    lookups = set().union(*imports.values())
     args.out.mkdir(parents=True, exist_ok=True)
     table = []
     for line in args.objects.read_text().splitlines():
@@ -124,8 +126,11 @@ def main() -> int:
         bad = [n for n, t in secs if n.startswith((".tdata", ".tbss", ".fini_array", ".ctors", ".dtors", ".preinit_array"))]
         if bad:
             sys.exit(f"module {mod}: sections the static loader does not handle: {bad}")
+        # Not the module's own import trampolines (imports/<mod>.S): re4_try_resolve_import would find one before
+        # the real symbol in an older module, and it resolves to itself (the r22c shooting range hang, 2026-11-18).
+        own = imports.get(mod, set())
         exports = sorted(s for s in defined_globals(args.nm, raw)
-                         if s in lookups or s in SPECIAL or s.startswith(SPECIAL_PREFIX))
+                         if (s in lookups and s not in own) or s in SPECIAL or s.startswith(SPECIAL_PREFIX))
         keep = args.out / f"{mod}.keep"
         keep.write_text("".join(s + "\n" for s in exports))
         # 1: no groups, only the looked-up symbols global; 2: their names and the sections
