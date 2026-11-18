@@ -259,8 +259,8 @@ This is a beta. Known so far:
 - **Speed**: about 25-30 frames per second, down to about 20 in the heaviest scenes (heavy rain, big fights).
 - **Glows of lamps and fires can show through walls.** The game hides a glow by reading the depth of the finished
   picture around the light; the 3DS renderer does not hand that back yet. To be fixed in a later beta.
-- **Effects that read the picture back are missing**: some blur, depth of field and heat haze, part of the shadows; in
-  one scene viewed through binoculars a character is not drawn. Bump mapping on some clothes is missing.
+- **Effects that read the picture back are missing**: some blur, depth of field and heat haze, part of the shadows.
+  Bump mapping on some clothes is missing.
 - **Loading between areas** shows a still picture for up to about 2 seconds.
 - **The HOME Menu** can rarely crash when opened during play (the console restarts; the game itself does not stop).
   Save before you open it.
