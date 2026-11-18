@@ -84,6 +84,7 @@ const char* const kDefaults[] = {
     "RE4_LOG_FILE_RESERVE=1048576",
     "RE4_3DS_LOG=0",
     "RE4_3DS_CHECKS=2",  // (R3) the start's checks with their warnings (the other builds: the end only)
+    "RE4_3DS_GPUBUSY=0",  // (2026-11-18) the GPU's busy sampler: 1000 wake-ups a second on core 1, for the log only
     0,
 };
 #else

@@ -30,7 +30,7 @@ everything the port needs from images of your discs.
     treasures and blue medallions still to find; separate floors; **+ / -** to zoom, a button to jump back to you, and
     drag it with a finger to look around.
 - **A settings screen** before you play (bottom screen): cheats one by one (infinite health, infinite ammo, one-hit
-  kills, automatic button prompts, +1,000,000 pesetas), the gyro, a frame counter.
+  kills, automatic button prompts, +1,000,000 pesetas), the gyro, a frame counter, the Circle Pad's sensitivity.
 - **The original movies** play through the console's hardware H.264 decoder, with sound; the European subtitles show
   as on the GameCube.
 - **Made for the New 3DS hardware**: a renderer on its PICA200 GPU, sound on its DSP, the game, the renderer and the
@@ -183,7 +183,10 @@ starting. The US discs are in English.
 - cheats: infinite health, infinite ammo, one-hit kills, automatic button prompts (QTEs), +1,000,000 pesetas once;
 - **Gyro aim** (on at 2x by default): while you hold R to aim, turning the console turns the aim too; the arrows set
   how strongly, down to off;
-- **Frame counter** in the corner of the game screen.
+- **Frame counter** in the corner of the game screen;
+- **Circle Pad sensitivity** (1x by default): how far the Circle Pad has to be pushed. The game was made for the
+  GameCube's long stick and wants about half of the pad's way before the character moves; if you have to push the pad
+  almost to its edge, raise it (1.25x, 1.5x, 2x). Higher values also make aiming with the pad quicker.
 
 The choices apply when a game starts or loads, and are kept on the SD card (`/3ds/pueblo/settings.bin`). The version
 of your build is in the top right corner of this screen.

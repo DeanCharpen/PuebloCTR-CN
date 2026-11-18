@@ -30,6 +30,7 @@ void re4_cheats_set(int bits);                                  // runtime/cheat
 int re4_cheats_wanted(void);
 void re4_cheats_money_arm(void);                                // runtime/cheats.cpp (R2)
 void re4_3ds_gyro_set(int gain10);                              // input_3ds.cpp (R2)
+void re4_3ds_stick_set(int index);                              // input_3ds.cpp (2026-11-18)
 void re4_3ds_hud_fps(int on);                                   // settings_3ds.cpp (R2)
 void re4_ui_setup(unsigned short* fb, const int* v, int lit);   // ui_bottom_3ds.cpp (R2)
 int re4_ui_setup_hit(int x, int y, int* left);
@@ -39,10 +40,11 @@ void re4_log(const char* fmt, ...);
 namespace {
 
 const char kPath[] = "sdmc:/3ds/pueblo/settings.bin";
-const int kRows = 7, kGyroRow = 5;
+const int kRows = 8, kGyroRow = 5, kStickRow = 7;  // (2026-11-18: row 7 the circle pad's sensitivity, 0..3)
+const int kStickSteps = 4;
 const int kGains[] = {0, 10, 15, 20, 25, 30, 40};
 const int kGainCount = (int) (sizeof(kGains) / sizeof(kGains[0]));
-const int kDefaults[kRows] = {0, 0, 0, 0, 0, 20, 0};  // (R0: the cheats off, the gyro on 2x, the counter off)
+const int kDefaults[kRows] = {0, 0, 0, 0, 0, 20, 0, 0};  // (R0: the cheats off, the gyro on 2x, the counter off; the stick 1x)
 
 struct File {
     char magic[4];  // "PCS1"
@@ -51,12 +53,13 @@ struct File {
     u8 money;       // +1 000 000 pesetas once a launch
     u8 gyro;        // the gain x10 (0 off)
     u8 fps;         // the frame counter
-    u8 pad[3];
+    u8 stick;       // (2026-11-18; padding before: 0) the circle pad's sensitivity 0..3: 1x 1.25x 1.5x 2x
+    u8 pad[2];
     u32 sum;        // FNV-1a of the bytes before
 };
 static_assert(sizeof(File) == 16, "settings.bin is 16 bytes");
 
-int gV[kRows] = {0, 0, 0, 0, 0, 20, 0};  // the screen's values: the boxes 0/1, the gyro's gain x10
+int gV[kRows] = {0, 0, 0, 0, 0, 20, 0, 0};  // the screen's values: the boxes 0/1, the gyro's gain x10, the stick's step
 volatile int gLit = -1;                  // the row under the finger
 bool gOn;                                // the screen (RE4_3DS_SETUP)
 volatile bool gInGame;                   // the title left for the gameplay
@@ -107,6 +110,7 @@ void load()
     gV[4] = f.money ? 1 : 0;
     gV[5] = kGains[gainIndex(f.gyro)];
     gV[6] = f.fps ? 1 : 0;
+    gV[kStickRow] = f.stick < kStickSteps ? f.stick : 0;
 }
 
 bool save()
@@ -119,6 +123,7 @@ bool save()
     f.money = (u8) (gV[4] ? 1 : 0);
     f.gyro = (u8) gV[5];
     f.fps = (u8) (gV[6] ? 1 : 0);
+    f.stick = (u8) gV[kStickRow];
     f.sum = fnv((const u8*) &f, offsetof(File, sum));
     FILE* fp = fopen(kPath, "r+b");  // (in place: the file keeps its cluster)
     if (!fp) {
@@ -144,9 +149,10 @@ void take()
     }
     re4_3ds_gyro_set(gV[5]);
     re4_3ds_hud_fps(gV[6]);
-    re4_log("3ds: settings taken by the game: cheats %d%s, gyro %d.%dx, frame counter %s", bits,
+    re4_3ds_stick_set(gV[kStickRow]);
+    re4_log("3ds: settings taken by the game: cheats %d%s, gyro %d.%dx, frame counter %s, stick step %d", bits,
             money ? ", +1 000 000 pesetas when Leon is free" : gV[4] ? " (the pesetas given this launch)" : "",
-            gV[5] / 10, gV[5] % 10, gV[6] ? "on" : "off");
+            gV[5] / 10, gV[5] % 10, gV[6] ? "on" : "off", gV[kStickRow]);
 }
 
 // the game's thread, each frame (after hudSample: its hook came first)
@@ -187,8 +193,8 @@ extern "C" void re4_3ds_setup_start(void)
     }
     load();
     re4_add_frame_hook(frame);
-    re4_log("3ds: settings screen until the gameplay: cheats %d%d%d%d, pesetas %d, gyro %d, frame counter %d", gV[0],
-            gV[1], gV[2], gV[3], gV[4], gV[5], gV[6]);
+    re4_log("3ds: settings screen until the gameplay: cheats %d%d%d%d, pesetas %d, gyro %d, frame counter %d, "
+            "stick step %d", gV[0], gV[1], gV[2], gV[3], gV[4], gV[5], gV[6], gV[kStickRow]);
 }
 
 // The panel's thread: the settings screen instead of the game's
@@ -258,6 +264,9 @@ extern "C" int re4_3ds_setup_touch(int phase, int x, int y)
             g = (g + 1) % kGainCount;
         }
         gV[kGyroRow] = kGains[g];
+    } else if (row == kStickRow) {  // (2026-11-18) the arrows as the gyro's: 2x -> 1x
+        const int s = gV[kStickRow];
+        gV[kStickRow] = left ? (s > 0 ? s - 1 : 0) : (s + 1) % kStickSteps;
     } else {
         gV[row] = !gV[row];
     }

@@ -447,7 +447,8 @@ int re4_3ds_audio_start(void)
     gRun = true;
     s32 priority = 0x30;
     svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    const int share = setting("RE4_3DS_AUDIO_CORE1", 30);
+    // (2026-11-18) 50 %, was 30: the castle's insects (25-47 voices) did not fit (journal, castle2)
+    const int share = setting("RE4_3DS_AUDIO_CORE1", 50);
     gThread = nullptr;
     if (share > 0) {
         APT_SetAppCpuTimeLimit((u32) share);
@@ -489,7 +490,7 @@ void re4_3ds_dsp_thread_start(void)
     const int core = setting("RE4_3DS_DSPTHREAD_CORE", 1);
     const int priority = setting("RE4_3DS_DSPTHREAD_PRIO", core == 1 ? 0x18 : 0x2e);
     if (core == 1) {
-        APT_SetAppCpuTimeLimit((u32) setting("RE4_3DS_AUDIO_CORE1", 30));
+        APT_SetAppCpuTimeLimit((u32) setting("RE4_3DS_AUDIO_CORE1", 50));
     }
     LightEvent_Init(&gDspGo, RESET_ONESHOT);
     LightEvent_Init(&gDspDone, RESET_ONESHOT);

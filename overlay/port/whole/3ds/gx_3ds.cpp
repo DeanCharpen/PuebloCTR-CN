@@ -353,6 +353,7 @@ bool gBlending;
 // the attribute setup of the draw before (which attributes come from the vertex)
 u32 gAttrKey = 0xFFFFFFFF;
 bool gTexDiv;  // a unit's coordinate from the packed normal: over its w (K)
+bool gTexFromNrm[3];  // (2026-11-18) the unit's coordinate from the normal
 int gColorAttr, gMatrixAttr, gTexAttr[3], gNormalAttr;
 
 // the TEV colour registers (0 PREV, 1..3 C0..C2) and konstant colours (BP 0xE0-0xE7, bit 23 tells
@@ -1069,6 +1070,19 @@ u32 gWaterArmed;  // the address of the next copy that is the water's (the game'
 // the draws after the water's copy in its picture read it, up to another copy to that buffer: a filter reading the
 // buffer before its own copy (the copy of the picture before) showed the water's copy over the scene (r109, 2026-11-07)
 bool gWaterLive;
+// (2026-11-18) The models' refraction shader (game/trans.cpp RefractShaderSetup; the tag's kind 1, RE4_3DS_REFRACT):
+// drawn where it reads another map besides the copy (r10c's river and dam: the copy, a render target, a highlight
+// map); the copy alone is a distortion volume (mist, glass) - without the indirect warp a light block over the scene
+// (r109, r10b, 2026-11-07), left out as before. Its copy: this picture's water copy again where there is one (the
+// same buffer and rectangle), else made only while such draws are there.
+bool gWaterArmedRefract;    // the armed copy is that shader's
+bool gWaterRefract;         // the draws now read a copy it named
+u32 gRefractWanted;         // the last picture one of its draws read another map (0: none yet)
+u32 gRefractPending;        // its copy not made: the buffer (its draws known by the map it goes to)
+int gRefractPendingMap = -1;
+u32 gWaterRectBp[2];        // BP 0x49 / 0x4A of the copy made
+u32 gRefractCopies, gRefractShared, gRefractNotMade, gRefractDraws, gRefractLeft;
+u32 gWaterDiv;              // water draws next to a map from the normal, down the shader's plain path
 // R4: the game's render targets (TexRenderMng, game/TexRender.cpp; patch 0337 tags their pass 'TXRN'): r300's sea and
 // the cave's water read particles drawn into a corner of the EFB and copied (RGBA8 at half size, with a clear). Between
 // the tags the EFB maps onto the frame (gMap) so that the copy's rectangle is the TH x TW pixels of its lower left
@@ -1216,6 +1230,11 @@ void texture(const Re4GxTexture* t, const uint8_t* data, const uint8_t* tlut, ui
         gTevDirty = true;  // (stage 6.8: the colour was a constant of its stages)
     }
     gMaps[t->map] = nullptr;
+    if ((t->flags & RE4_GX_TEX_COPY) && gRefractPending && t->address == gRefractPending) {
+        gRefractPendingMap = (int) t->map;  // (2026-11-18: the refraction shader's copy, not made)
+    } else if (gRefractPendingMap == (int) t->map) {
+        gRefractPendingMap = -1;
+    }
     if ((t->flags & RE4_GX_TEX_COPY) && !gTexRenders.empty()) {
         auto tr = gTexRenders.find(t->address);
         if (tr != gTexRenders.end()) {
@@ -1944,6 +1963,7 @@ void ownerTag(const uint32_t owner[4])
     }
     if (owner[0] == kWaterTag) {
         gWaterArmed = owner[1];  // (the water's copy next; the owner of the draws left as it was)
+        gWaterArmedRefract = owner[2] == 1;  // (2026-11-18)
         return;
     }
     gOwnerData = owner[0];
@@ -3233,7 +3253,11 @@ void waterCopy(const uint32_t* bp)
 {
     const u32 dest = (bp[0x4B] & 0x1FFFFF) << 5;
     const bool armed = dest && dest == gWaterArmed;
+    const bool refract = armed && gWaterArmedRefract;  // (2026-11-18)
     gWaterArmed = 0;
+    gWaterArmedRefract = false;
+    gRefractPending = 0;
+    gRefractPendingMap = -1;
     if (!armed) {
         if (dest && dest == gWaterDest) {
             gWaterLive = false;  // another copy to the same buffer (the door, a filter): not the water's, as before
@@ -3243,6 +3267,23 @@ void waterCopy(const uint32_t* bp)
     if (!gWaterOn || !gInFrame) {
         return;
     }
+    if (refract) {
+        if (gWaterLive && gWaterFrame == gFrameNo && dest == gWaterDest && (bp[0x49] & 0xFFFFF) == gWaterRectBp[0] &&
+            (bp[0x4A] & 0xFFFFF) == gWaterRectBp[1]) {
+            gWaterRefract = true;  // this picture's copy again (the draws since: the water's own, other pieces of it)
+            gRefractShared++;
+            return;
+        }
+        if (!gRefractWanted || gRefractWanted + 2 < gFrameNo) {
+            if (dest == gWaterDest) {
+                gWaterLive = false;  // (as any other copy to the buffer)
+            }
+            gRefractPending = dest;  // none of its draws drawn lately: no copy (volumes only)
+            gRefractNotMade++;
+            return;
+        }
+    }
+    gWaterRefract = refract;
     const gxCmdQueue_s& q = *gQueue;
     if (q.numEntries + kQueueForKick + 2 > q.maxEntries) {
         gWaterNoQueue++;
@@ -3289,6 +3330,9 @@ void waterCopy(const uint32_t* bp)
     gWaterFrame = gFrameNo;
     gWaterLive = true;
     gWaterCopies++;
+    gWaterRectBp[0] = bp[0x49] & 0xFFFFF;  // (2026-11-18)
+    gWaterRectBp[1] = bp[0x4A] & 0xFFFFF;
+    gRefractCopies += refract;
 }
 
 // (R4) A render target's copy (BP 0x52 between its tags): the draws before kicked, then the TW x TH pixels of the
@@ -3772,6 +3816,9 @@ bool setAttributes(const Re4GxDraw& d, const void* vertices, bool vertexColor, b
         key |= (tc[u] ? 4u : 0) << u | (fromPos[u] ? 32u : 0) << u | (fromNrm[u] ? 1024u : 0) << u;
     }
     gTexDiv = nrmKind == 2 && (fromNrm[0] || fromNrm[1] || fromNrm[2]);
+    gTexFromNrm[0] = fromNrm[0];  // (2026-11-18)
+    gTexFromNrm[1] = fromNrm[1];
+    gTexFromNrm[2] = fromNrm[2];
     key |= (u32) nrmKind << 13;
     key |= (u32) normal << 8;
     if (key != gAttrKey) {
@@ -4627,6 +4674,21 @@ void drawTimed(const Re4GxDraw* dp, const void* vertices, const uint16_t* indice
         return;
     }
     gCopyFillDraws += gTevFill;
+    // (2026-11-18) the models' refraction shader: a draw that reads another map too is drawn, the copy alone left out
+    if (gUnits > 0 && gWaterRefract && gMaps[gUnitMap[0]] == &gWater) {
+        if (gUnits < 2) {
+            gRefractLeft++;
+            gStats.untextured++;
+            return;
+        }
+        gRefractWanted = gFrameNo;
+        gRefractDraws++;
+    } else if (gUnits > 0 && gRefractPendingMap >= 0 && gUnitMap[0] == gRefractPendingMap && !gMaps[gUnitMap[0]]) {
+        if (gUnits >= 2) {
+            gRefractWanted = gFrameNo;  // (its copy from the next picture on; this draw without it)
+        }
+        gRefractLeft++;
+    }
     for (int u = 0; u < gUnits; u++) {
         if (!gMaps[gUnitMap[u]] || (gMaps[gUnitMap[u]] == &gWater && u != 0)) {
             gWaterOdd += gMaps[gUnitMap[u]] == &gWater;  // (the water's copy: unit 0 only, the projective one)
@@ -4674,8 +4736,16 @@ void drawTimed(const Re4GxDraw* dp, const void* vertices, const uint16_t* indice
         return;
     }
     bool water = false;
+    // (2026-11-18) the copy next to a map whose coordinates come from the packed normal (the shader's divide mode:
+    // r10c's and r11b's surfaces, the refraction shader's draws): down the shader's plain path as the lake's water -
+    // tdiv off for it, the rows of the units from the normal times 1/127 below. The shader's tdiv branch has no water
+    // mode: two edits of it hung the GPU (journal 2026-11-18). RE4_3DS_WATERDIV=0: as before (not projective)
+    bool waterPlain = false;
     if (gUnits > 0 && gMaps[gUnitMap[0]] == &gWater) {
-        if (gTexProj[0] && !gTexDiv) {
+        static const bool divPlain = !getenv("RE4_3DS_WATERDIV") || atoi(getenv("RE4_3DS_WATERDIV")) != 0;
+        waterPlain = gTexProj[0] && gTexDiv && divPlain;
+        gWaterDiv += waterPlain;
+        if (gTexProj[0] && (!gTexDiv || waterPlain)) {
             // the water's copy: s' = B_s T + A_s Q, t' = B_t S + A_t Q (GX: s = S/Q, t = T/Q over the copy); the PICA
             // divides by texcoord0w (the position's w = Q); rows put back at the next setTexMatrix
             const float* m = gTexMtx[0];
@@ -4713,9 +4783,21 @@ void drawTimed(const Re4GxDraw* dp, const void* vertices, const uint16_t* indice
         gTexMtx[u][0] = NAN;
         gTexRenderDraws++;
     }
+    if (waterPlain) {  // (2026-11-18) (m . nK + m3 K) / 127 = m . n + m3 for K = 127; put back at the next setTexMatrix
+        for (int u = 1; u < gUnits; u++) {
+            if (!gTexFromNrm[u] || gMaps[gUnitMap[u]]->turned) {
+                continue;
+            }
+            const float* m = gTexMtx[u];
+            const float s = 1.0f / 127.0f;
+            C3D_FVUnifSet(GPU_VERTEX_SHADER, gLocTexSel + 2 * u, m[0] * s, m[1] * s, m[2] * s, m[3] * s);
+            C3D_FVUnifSet(GPU_VERTEX_SHADER, gLocTexSel + 2 * u + 1, m[4] * s, m[5] * s, m[6] * s, m[7] * s);
+            gTexMtx[u][0] = NAN;
+        }
+    }
     setChannel(xfReg, vertexColor);
     setLights(xfReg, xfMem);
-    setSwitch(kTexDiv, gTexDiv);
+    setSwitch(kTexDiv, gTexDiv && !waterPlain);
     setSwitch(kTex1, gUnits > 1);
     setSwitch(kTex2, gUnits > 2);
     if (gProjDirty) {
@@ -4950,6 +5032,9 @@ void frame(uint32_t xfb, uint32_t width, uint32_t height)
     }
     gInFrame = false;
     gWaterLive = false;  // (the water's copy read in its picture only)
+    gWaterRefract = false;  // (2026-11-18)
+    gRefractPending = 0;
+    gRefractPendingMap = -1;
     if (gWater.tex.data && gWaterFrame + 600 < gFrameNo && gWater.lastFrame + 600 < gFrameNo) {
         forgetBound(&gWater);  // (the water's copy: its memory back)
         linearFree(gWater.tex.data);
@@ -5191,7 +5276,10 @@ extern "C" int re4_3ds_gx_init(void)
     gTexLodFrom = texLod ? (u32) atoi(texLod) : 0;
     const char* busy = getenv("RE4_3DS_GPUBUSY");
     if (!busy || *busy != '0') {
-        APT_SetAppCpuTimeLimit(30);
+        u32 share = 0;  // (2026-11-18) not below what the sound took (RE4_3DS_AUDIO_CORE1, 50 %)
+        if (R_FAILED(APT_GetAppCpuTimeLimit(&share)) || share < 30) {
+            APT_SetAppCpuTimeLimit(30);
+        }
         gBusyOn = threadCreate(busySampler, nullptr, 4096, 0x18, 1, true) != nullptr;
         gBusyFrom = svcGetSystemTick();
         re4_log("3ds: GPU busy sampler %s", gBusyOn ? "on core 1" : "did not start (no thread on core 1)");
@@ -5533,6 +5621,13 @@ extern "C" void re4_3ds_gx_frame(int log)
                 "room", calls - waterCalls, (unsigned) re4_gx_water_addr, refract - refractCalls, gWaterCopies,
                 gWaterDraws, gWaterOdd, gWaterNoQueue);
     }
+    if (gRefractCopies || gRefractShared || gRefractNotMade || gRefractDraws || gRefractLeft || gWaterDiv) {  // (2026-11-18)
+        re4_log("3ds: screen: the models' refraction shader (RE4_3DS_REFRACT): its copy %u made, %u this picture's again, "
+                "%u not made; %u draws drawn (another map read), %u left out; the water's draws next to a map from the "
+                "normal, down the plain path (RE4_3DS_WATERDIV): %u", gRefractCopies, gRefractShared, gRefractNotMade,
+                gRefractDraws, gRefractLeft, gWaterDiv);
+    }
+    gRefractCopies = gRefractShared = gRefractNotMade = gRefractDraws = gRefractLeft = gWaterDiv = 0;
     waterCalls = calls;
     refractCalls = refract;
     if (gTexRenderPasses || gTexRenderCopies || gTexRenderDraws || gTexRenderOdd || gTexRenderNoQueue) {

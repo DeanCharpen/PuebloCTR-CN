@@ -4049,7 +4049,7 @@ index 389f40ea..f5baaba3 100644
 -            re4_log("gci: %s imported (%u blocks%s)", name, blocks, european ? ", European G4BP08 as G4BE08" : "");
 +            re4_log("gci: %s imported (%u blocks)", name, blocks);
 diff --git a/port/whole/runtime/gx_decode.cpp b/port/whole/runtime/gx_decode.cpp
-index aaeaf967..a2a34db8 100644
+index aaeaf967..400313b7 100644
 --- a/port/whole/runtime/gx_decode.cpp
 +++ b/port/whole/runtime/gx_decode.cpp
 @@ -30,0 +31,4 @@
@@ -4241,7 +4241,13 @@ index aaeaf967..a2a34db8 100644
 -        if (wide == 1) {
 -            v.flags |= RE4_GX_CHUNK_WIDE;
 -        }
-@@ -1649,0 +1798,43 @@ void draw(u8 op, u32 count, const u8* data, bool be, bool stable)
+@@ -1642,0 +1791,5 @@ bool addEntry(u32 vat, const Format& f, const DrawArrays& arrays, const u8* data
++#if defined(__3DS__)
++u32 gBigDrawPieces;  // (2026-11-18) draws over the renderer's stage cut into pieces (the log: since the last line)
++u32 gBigGrids;       // (2026-11-18) of them square strip grids drawn from every RE4_3DS_BIGGRID-th line
++#endif
++
+@@ -1649,0 +1803,126 @@ void draw(u8 op, u32 count, const u8* data, bool be, bool stable)
 +#if defined(__3DS__)
 +    if (gDirect && count) {
 +        // the vertices straight into the renderer's memory, the draw handed over at once
@@ -4250,6 +4256,89 @@ index aaeaf967..a2a34db8 100644
 +        gStagedVertices += count;
 +        const u32 vat = op & 7;
 +        const Format& f = format(vat);
++        // (2026-11-18) a draw larger than the renderer's stage (768 KB) in pieces of at most 512 KB, not left out:
++        // r205's draining water, one strip of 25 312 vertices of 32 bytes (Espgen45_TransSub)
++        const u32 kPieceBytes = 512u << 10;
++        const u32 pieceKind = op & 0xF8;
++        // (2026-11-18) a square serpentine strip grid (r205's water: 113 x 113 vertices, rows of 2W joined by a
++        // repeated vertex, every other row backwards) drawn from every RE4_3DS_BIGGRID-th line (4: 1 624 vertices
++        // of 25 312): its vertices converted each picture cost the GX thread 16 ms. 0: the whole grid in pieces
++        static const int gridStep = getenv("RE4_3DS_BIGGRID") ? atoi(getenv("RE4_3DS_BIGGRID")) : 4;
++        if (pieceKind == 0x98 && gridStep > 1 && (size_t) count * f.stride > kPieceBytes && f.inSize) {
++            u32 w = 2;
++            while (2 * w * (w - 1) < count) {
++                w++;
++            }
++            const u32 rows = w - 1, n = f.inSize;
++            const bool square = 2 * w * (w - 1) == count && rows % (u32) gridStep == 0 && rows >= 2 &&
++                                !memcmp(data + (size_t) (2 * w - 1) * n, data + (size_t) (2 * w) * n, n) &&
++                                !memcmp(data + (size_t) (4 * w - 1) * n, data + (size_t) (4 * w) * n, n);
++            if (square) {
++                static std::vector<u8> grid;
++                const u32 step = (u32) gridStep, cols = rows / step + 1, outRows = rows / step;
++                grid.resize((size_t) outRows * cols * 2 * n);
++                u8* o = grid.data();
++                auto put = [&](u32 c, u32 z) {  // the source vertex of column c, line z
++                    const u32 j = z < rows ? z : rows - 1;
++                    const u32 k = j % 2 == 0 ? c : rows - c;
++                    memcpy(o, data + (size_t) (2 * w * j + 2 * k + (z < rows ? 0 : 1)) * n, n);
++                    o += n;
++                };
++                for (u32 r = 0; r < outRows; r++) {
++                    for (u32 i = 0; i < cols; i++) {
++                        const u32 c = (r % 2 == 0 ? i : cols - 1 - i) * step;
++                        put(c, r * step);
++                        put(c, r * step + step);
++                    }
++                }
++                gStats.draws--;
++                gStats.vertices -= count;
++                gFifoVertices -= count;
++                gBigGrids++;
++                draw(op, outRows * cols * 2, grid.data(), be, false);
++                return;
++            }
++        }
++        if ((size_t) count * f.stride > kPieceBytes && f.inSize && pieceKind != 0xA0) {
++            const u32 most = kPieceBytes / f.stride;
++            u32 per = most, overlap = 0;
++            switch (pieceKind) {
++            case 0x80:
++            case 0x88:
++                per = most & ~3u;
++                break;
++            case 0x90:
++                per = most / 3 * 3;
++                break;
++            case 0x98:
++                per = most & ~1u;  // even: each piece starts on an even vertex, the triangles keep their winding
++                overlap = 2;
++                break;
++            case 0xA8:
++                per = most & ~1u;
++                break;
++            case 0xB0:
++                overlap = 1;
++                break;
++            default:
++                break;
++            }
++            if (per > overlap + 2) {
++                gStats.draws--;  // (each piece counts itself)
++                gStats.vertices -= count;
++                gFifoVertices -= count;
++                gBigDrawPieces++;
++                for (u32 s = 0; s < count;) {
++                    const u32 n = count - s < per ? count - s : per;
++                    draw(op, n, data + (size_t) s * f.inSize, be, stable);
++                    if (s + n >= count) {
++                        break;
++                    }
++                    s += n - overlap;
++                }
++                return;
++            }
++        }
 +        static const Array kNone = {nullptr, 0, 0};
 +        arraysCurrent();
 +        DrawArrays arrays;
@@ -4285,7 +4374,7 @@ index aaeaf967..a2a34db8 100644
 +        return;
 +    }
 +#endif
-@@ -1800,0 +1992,51 @@ u32 gLoggedMissing;
+@@ -1800,0 +2080,51 @@ u32 gLoggedMissing;
 +#if !defined(__3DS__)
 +// RE4_TEXDUMP=DIR (stage 5.7a): each texture bound, once a run, to DIR/tex-<pid>.dump (re4_tex_dump.h): level 0 and
 +// the palette, for the 3DS's pack of PICA textures (port/whole/3ds/tools/texpak.cpp)
@@ -4337,7 +4426,7 @@ index aaeaf967..a2a34db8 100644
 +}
 +#endif
 +
-@@ -1886,0 +2129,26 @@ void bindMap(u32 map)
+@@ -1886,0 +2217,26 @@ void bindMap(u32 map)
 +#if !defined(__3DS__)
 +    if (bound.key != 0 && !(bound.flags & RE4_GX_TEX_COPY) && bound.dataBytes) {
 +        dumpTexture(t, re4gx::memory(t.address, bound.dataBytes));
@@ -4364,30 +4453,30 @@ index aaeaf967..a2a34db8 100644
 +        return;
 +    }
 +#endif
-@@ -1924,0 +2193,3 @@ void bindTextures()
+@@ -1924,0 +2281,3 @@ void bindTextures()
 +#if defined(__3DS__)
 +    PartTimer timer(kTimeTextures);
 +#endif
-@@ -1948,0 +2220,5 @@ void bindTextures()
+@@ -1948,0 +2308,5 @@ void bindTextures()
 +#if defined(__3DS__)
 +// Register writes per picture (re4_gx_kept_report): all and those that changed the state
 +u32 gStateBp, gStateBpChanged, gStateXf, gStateXfChanged, gStateXfWords, gStateCp;
 +#endif
 +
-@@ -1950,0 +2227,3 @@ void cpWrite(u8 reg, u32 value)
+@@ -1950,0 +2315,3 @@ void cpWrite(u8 reg, u32 value)
 +#if defined(__3DS__)
 +    gStateCp++;
 +#endif
-@@ -1951,0 +2231,2 @@ void cpWrite(u8 reg, u32 value)
+@@ -1951,0 +2319,2 @@ void cpWrite(u8 reg, u32 value)
 +    // (only on a change: the game writes VCD and the matrix indices for each model, mostly as they were; the formats
 +    // worked out again at each were ~1 us a list of the cache on bench7, stage 3.8)
-@@ -1953 +2234,4 @@ void cpWrite(u8 reg, u32 value)
+@@ -1953 +2322,4 @@ void cpWrite(u8 reg, u32 value)
 -        memset(gFormatValid, 0, sizeof(gFormatValid));  // every format reads these
 +        const u32 old = reg == 0x30 ? gGp.matIndexA : reg == 0x40 ? gGp.matIndexB : reg == 0x50 ? gGp.vcdLo : gGp.vcdHi;
 +        if (value != old) {
 +            memset(gFormatValid, 0, sizeof(gFormatValid));  // every format reads these
 +        }
-@@ -1955 +2239,10 @@ void cpWrite(u8 reg, u32 value)
+@@ -1955 +2327,10 @@ void cpWrite(u8 reg, u32 value)
 -        gFormatValid[reg & 7] = false;
 +        const u32 old = reg < 0x80 ? gGp.vatA[reg & 7] : reg < 0x90 ? gGp.vatB[reg & 7] : gGp.vatC[reg & 7];
 +        if (value != old) {
@@ -4399,17 +4488,17 @@ index aaeaf967..a2a34db8 100644
 +    if (reg == 0x30 || reg == 0x40 || reg == 0x50 || reg == 0x60 || (reg >= 0x70 && reg < 0xA0)) {
 +        re4_gx_cp_shadow[reg] = value;
 +        re4_gx_cp_known[reg] = 1;
-@@ -1956,0 +2250 @@ void cpWrite(u8 reg, u32 value)
+@@ -1956,0 +2338 @@ void cpWrite(u8 reg, u32 value)
 +#endif
-@@ -1973,0 +2268,3 @@ void cpWrite(u8 reg, u32 value)
+@@ -1973,0 +2356,3 @@ void cpWrite(u8 reg, u32 value)
 +#if defined(__3DS__)
 +        gStaticArrays = false;
 +#endif
-@@ -1976,0 +2274,3 @@ void cpWrite(u8 reg, u32 value)
+@@ -1976,0 +2362,3 @@ void cpWrite(u8 reg, u32 value)
 +#if defined(__3DS__)
 +        gStaticArrays = false;
 +#endif
-@@ -2010,0 +2311,9 @@ void xfWrite(u32 address, const u8* data, u32 count, bool be)
+@@ -2010,0 +2399,9 @@ void xfWrite(u32 address, const u8* data, u32 count, bool be)
 +#if defined(__3DS__)
 +    gStateXf++;
 +    gStateXfWords += count;
@@ -4419,7 +4508,7 @@ index aaeaf967..a2a34db8 100644
 +        gDirect->xf(address, count);
 +    }
 +#endif
-@@ -2070,0 +2380,53 @@ bool isAction(u8 reg)
+@@ -2070,0 +2468,61 @@ bool isAction(u8 reg)
 +}  // namespace
 +
 +// The water's copy of the frame (game/trans.cpp GetEfbTex, patch 0328): the address it goes to (physical, as BP 0x4B
@@ -4464,25 +4553,33 @@ index aaeaf967..a2a34db8 100644
 +volatile uint32_t re4_gx_refract_calls;
 +extern "C" void re4_gx_refract_copy(const void* dest)
 +{
-+    static const int on = getenv("RE4_3DS_REFRACT") && atoi(getenv("RE4_3DS_REFRACT")) != 0;
++    // (2026-11-18) RE4_3DS_REFRACT: 0 none; 1 (the default) tagged as this shader's - the renderer draws its draws
++    // that read another map besides the copy (r10c's river and dam: a render target, a highlight map), the copy alone
++    // (the volumes above) left out; 2 all of them as the water's (the =1 of before)
++    static const int mode = getenv("RE4_3DS_REFRACT") ? atoi(getenv("RE4_3DS_REFRACT")) : 1;
 +    re4_gx_refract_calls = re4_gx_refract_calls + 1;
-+    if (on) {
++    if (mode >= 2) {
 +        re4_gx_water_copy(dest);
++    } else if (mode == 1) {
++#if defined(__3DS__)
++        re4_gx_water_addr = (uint32_t) (uintptr_t) dest & 0x03FFFFE0u;
++        re4_gx_put_owner(0x57415452u, re4_gx_water_addr, 1, 0);  // 'WATR', kind 1
++#endif
 +    }
 +}
 +
 +namespace {
 +
-@@ -2110,0 +2473,4 @@ void bpWrite(u32 word)
+@@ -2110,0 +2569,4 @@ void bpWrite(u32 word)
 +#if defined(__3DS__)
 +        // while a mask waits no write may be dropped (the masked one acts on part of the word)
 +        re4_gx_shadow_masked(value != 0xFFFFFF);
 +#endif
-@@ -2112,0 +2479,3 @@ void bpWrite(u32 word)
+@@ -2112,0 +2575,3 @@ void bpWrite(u32 word)
 +#if defined(__3DS__)
 +    re4_gx_shadow_masked(false);
 +#endif
-@@ -2115,0 +2485,12 @@ void bpWrite(u32 word)
+@@ -2115,0 +2581,12 @@ void bpWrite(u32 word)
 +#if defined(__3DS__)
 +    {
 +        // the shadow: the same word again changes nothing, but for the registers that act on each
@@ -4495,7 +4592,7 @@ index aaeaf967..a2a34db8 100644
 +        }
 +    }
 +#endif
-@@ -2116,0 +2498,11 @@ void bpWrite(u32 word)
+@@ -2116,0 +2594,11 @@ void bpWrite(u32 word)
 +#if defined(__3DS__)
 +    gStateBp++;
 +    // (the water's copy, BP 0x52 to re4_gx_water_addr: each write is a copy, the same word again too)
@@ -4507,11 +4604,11 @@ index aaeaf967..a2a34db8 100644
 +        gDirect->bp(reg, now);
 +    }
 +#endif
-@@ -2153 +2545,2 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth);
+@@ -2153 +2641,2 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth);
 -void callDisplayList(u32 address, u32 size, int depth)
 +// The port's owner tag (command 0x02, or straight in: re4gx::directOwner)
 +void ownerCommand(const u32 owner[4])
-@@ -2155,3 +2548,4 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2155,3 +2644,4 @@ void callDisplayList(u32 address, u32 size, int depth)
 -    gStats.calls++;
 -    if (depth > 0) {
 -        return;  // the GP does not nest display lists
@@ -4519,7 +4616,7 @@ index aaeaf967..a2a34db8 100644
 +#if defined(__3DS__)
 +    if (owner[0] == 0x5458524Eu) {  // 'TXRN' (R4)
 +        re4_gx_texrender_pass = owner[1] == 1;
-@@ -2159,6 +2553,2 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2159,6 +2649,2 @@ void callDisplayList(u32 address, u32 size, int depth)
 -    const u8* list = re4gx::listMemory(address, size);
 -    if (!list) {
 -        if (gUnknownLogged++ < 8) {
@@ -4528,7 +4625,7 @@ index aaeaf967..a2a34db8 100644
 -        return;
 +    if (gDirect) {
 +        gDirect->owner(owner);
-@@ -2166,6 +2556,3 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2166,6 +2652,3 @@ void callDisplayList(u32 address, u32 size, int depth)
 -    gStats.dlBytes += size;
 -    gListBytes += size;
 -    bool be = true;
@@ -4538,7 +4635,7 @@ index aaeaf967..a2a34db8 100644
 +#endif
 +    if (chunk()) {
 +        emit(RE4_GX_OP_OWNER, owner, 4);
-@@ -2173,8 +2560,77 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2173,8 +2656,77 @@ void callDisplayList(u32 address, u32 size, int depth)
 -    size_t at = 0;
 -    while (at < size) {
 -        size_t need = 0;
@@ -4624,9 +4721,9 @@ index aaeaf967..a2a34db8 100644
 +    KeptFront& fr = keptFront(at);
 +    if (fr.at == at) {
 +        fr.at = 0;
-@@ -2181,0 +2638 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2181,0 +2734 @@ void callDisplayList(u32 address, u32 size, int depth)
 +    gKept.erase(at);
-@@ -2182,0 +2640,16 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2182,0 +2736,16 @@ void callDisplayList(u32 address, u32 size, int depth)
 +u32 gKeptBytes;
 +struct KeptStats {
 +    u32 hits, made, never, failed, evicted, rebuilt, uniqueVertices, rawVertices, dynHits, dynMade, dynVertices;
@@ -4643,18 +4740,18 @@ index aaeaf967..a2a34db8 100644
 +int gSkinTemplate = -1; // RE4_3DS_SKINTEMPLATE (-1: not read yet)
 +int gSplitFrom = -1;    // RE4_3DS_SPLIT=N: dynamic lists split from the decoder's frame N (0 never; -1 not read yet)
 +KeptStats gKeptStats;
-@@ -2184,3 +2657 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2184,3 +2753 @@ void callDisplayList(u32 address, u32 size, int depth)
 -// One command at p (n bytes available): its length, or 0 when it is cut off
 -// (*need: the bytes it takes).
 -size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +u64 keptSample(const u8* list, u32 size)
-@@ -2188,3 +2659,2 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2188,3 +2755,2 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -    *need = 1;
 -    if (n == 0) {
 -        return 0;
 +    if (size <= 192) {
 +        return hashBytes(list, size, size);
-@@ -2192,16 +2662,80 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2192,8 +2758,80 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -    u8 op = p[0];
 -    switch (op) {
 -    case 0x00:  // NOP
@@ -4662,14 +4759,6 @@ index aaeaf967..a2a34db8 100644
 -    case 0x08:  // CP register
 -        *need = 6;
 -        if (n < 6) {
--            return 0;
--        }
--        gStats.commands++;
--        cpWrite(p[1], rd32(p + 2, be));
--        return 6;
--    case 0x10: {  // XF registers / memory: (count - 1) << 16 | address, then the words
--        *need = 5;
--        if (n < 5) {
 -            return 0;
 +    u64 h = hashBytes(list, 64, size);
 +    h = hashBytes(list + (size / 2 & ~3u), 64, h);
@@ -4751,11 +4840,13 @@ index aaeaf967..a2a34db8 100644
 +    {
 +        for (int m = 0; m <= 128; m++) {
 +            k[m] = (u8) (m <= 64 ? 127 : 8128 / m);
-@@ -2209,5 +2743,46 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
--        u32 head = rd32(p + 1, be);
--        size_t count = (head >> 16) + 1;
--        *need = 5 + 4 * count;
--        if (n < *need) {
+@@ -2201,7 +2839,46 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+-        gStats.commands++;
+-        cpWrite(p[1], rd32(p + 2, be));
+-        return 6;
+-    case 0x10: {  // XF registers / memory: (count - 1) << 16 | address, then the words
+-        *need = 5;
+-        if (n < 5) {
 -            return 0;
 +    }
 +};
@@ -4803,20 +4894,14 @@ index aaeaf967..a2a34db8 100644
 +        memcpy(out, full, 12);
 +        if (head == 16) {
 +            packNormal(full + 12, out + 12);
-@@ -2215,4 +2790 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
--        gStats.commands++;
--        gStats.xf++;
--        xfWrite(head & 0xFFFF, p + 5, (u32) count, be);
--        return *need;
-+        memcpy(out + head, full + head + cut, stride - head);
-@@ -2220,7 +2792,15 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
--    case 0x20:
--    case 0x28:
--    case 0x30:
--    case 0x38:  // XF loads from the indexed arrays 12..15
--        *need = 5;
--        if (n < 5) {
+@@ -2209,5 +2886,17 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+-        u32 head = rd32(p + 1, be);
+-        size_t count = (head >> 16) + 1;
+-        *need = 5 + 4 * count;
+-        if (n < *need) {
 -            return 0;
++        memcpy(out + head, full + head + cut, stride - head);
++    }
 +}
 +
 +// (2026-11-11, r200: a check's buffer grown past the C heap's largest piece, std::terminate) a scratch buffer to n
@@ -4832,16 +4917,20 @@ index aaeaf967..a2a34db8 100644
 +        if (gScratchShort++ < 8) {
 +            re4_log("GX: a scratch buffer of %u KB without room in the C heap (a check left out, or the list drawn "
 +                    "as before)", (unsigned) ((n * sizeof(T)) >> 10));
-@@ -2228,7 +2808,33 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2215,4 +2904 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -        gStats.commands++;
--        xfIndexed(op, rd32(p + 1, be));
--        return 5;
--    case 0x40:  // call a display list
--        *need = 9;
--        if (n < 9) {
--            return 0;
+-        gStats.xf++;
+-        xfWrite(head & 0xFFFF, p + 5, (u32) count, be);
+-        return *need;
 +        return false;
-+    }
+@@ -2220,7 +2906,31 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+-    case 0x20:
+-    case 0x28:
+-    case 0x30:
+-    case 0x38:  // XF loads from the indexed arrays 12..15
+-        *need = 5;
+-        if (n < 5) {
+-            return 0;
 +}
 +
 +// A dynamic list's vertices converted whole from the arrays as they are (the check, k.full); false: no room for the
@@ -4873,13 +4962,13 @@ index aaeaf967..a2a34db8 100644
 +            }
 +            f.posBlock[0](out + (size_t) done * stride, stride, gBlock.pos, n, f.posScale);
 +            done += n;
-@@ -2236,7 +2842,8 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2228,7 +2938,8 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -        gStats.commands++;
--        callDisplayList(rd32(p + 1, be), rd32(p + 5, be), depth);
--        return 9;
--    case 0x02: {  // the port's owner tag (gx_fifo.cpp re4_gx_put_owner, patch 0137)
--        *need = 17;
--        if (n < 17) {
+-        xfIndexed(op, rd32(p + 1, be));
+-        return 5;
+-    case 0x40:  // call a display list
+-        *need = 9;
+-        if (n < 9) {
 -            return 0;
 +    }
 +    if (k.nrmIdx) {  // as convertVertices reads them (its first three components), then packed
@@ -4889,10 +4978,14 @@ index aaeaf967..a2a34db8 100644
 +        if (gPackS8From < 0) {
 +            const char* v = getenv("RE4_GX_PACKS8");
 +            gPackS8From = v ? atoi(v) : 1;
-@@ -2244,3 +2851,21 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
--        const u32 owner[4] = {rd32(p + 1, be), rd32(p + 5, be), rd32(p + 9, be), rd32(p + 13, be)};
--        if (chunk()) {
--            emit(RE4_GX_OP_OWNER, owner, 4);
+@@ -2236,7 +2947,1230 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+-        gStats.commands++;
+-        callDisplayList(rd32(p + 1, be), rd32(p + 5, be), depth);
+-        return 9;
+-    case 0x02: {  // the port's owner tag (gx_fifo.cpp re4_gx_put_owner, patch 0137)
+-        *need = 17;
+-        if (n < 17) {
+-            return 0;
 +        const bool s8 = f.nrmFormat == 1 && gPackS8From && gDirectFrames >= (u32) gPackS8From;
 +        for (u32 done = 0; done < count;) {
 +            const u32 n = count - done < kBlock ? count - done : kBlock;
@@ -4914,18 +5007,8 @@ index aaeaf967..a2a34db8 100644
 +                packNormal((const u8*) (work + 3 * v), out + (size_t) (done + v) * stride + 12);
 +            }
 +            done += n;
-@@ -2248 +2872,0 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
--        return 17;
-@@ -2250,9 +2874,1466 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
--    case 0x44:  // metrics
--    case 0x48:  // invalidate the vertex cache
--        gStats.commands++;
--        return 1;
--    case 0x61:  // BP register
--        *need = 5;
--        if (n < 5) {
--            return 0;
--        }
++        }
++    }
 +}
 +
 +// A dynamic list's bytes a vertex of the position and the packed normal: the first part of a split one
@@ -6133,7 +6216,10 @@ index aaeaf967..a2a34db8 100644
 +            heapShort = true;
 +            k.retry = gDirectFrames + 30;
 +            keptFailed(1, 0);
-+        }
+@@ -2244,3 +4178,227 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+-        const u32 owner[4] = {rd32(p + 1, be), rd32(p + 5, be), rd32(p + 9, be), rd32(p + 13, be)};
+-        if (chunk()) {
+-            emit(RE4_GX_OP_OWNER, owner, 4);
 +        if (!built) {
 +            k.never = !heapShort && k.retry != gDirectFrames + 2;
 +            gKeptStats.never += k.never;
@@ -6361,7 +6447,7 @@ index aaeaf967..a2a34db8 100644
 +        *need = 9;
 +        if (n < 9) {
 +            return 0;
-+        }
+@@ -2247,0 +4406,10 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +        gStats.commands++;
 +        callDisplayList(rd32(p + 1, be), rd32(p + 5, be), depth);
 +        return 9;
@@ -6372,8 +6458,7 @@ index aaeaf967..a2a34db8 100644
 +        }
 +        const u32 owner[4] = {rd32(p + 1, be), rd32(p + 5, be), rd32(p + 9, be), rd32(p + 13, be)};
 +        ownerCommand(owner);
-+        return 17;
-+    }
+@@ -2249,0 +4418,9 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +    case 0x03:  // the port's hint (gx_fifo.cpp re4_gx_put_hint): 1 the arrays set are file data
 +        *need = 5;
 +        if (n < 5) {
@@ -6383,22 +6468,13 @@ index aaeaf967..a2a34db8 100644
 +        gStaticArrays = rd32(p + 1, be) == 1;
 +#endif
 +        return 5;
-+    case 0x44:  // metrics
-+    case 0x48:  // invalidate the vertex cache
-+        gStats.commands++;
-+        return 1;
-+    case 0x61:  // BP register
-+        *need = 5;
-+        if (n < 5) {
-+            return 0;
-+        }
-@@ -2275,0 +4357,3 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2275,0 +4453,3 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +#if defined(__3DS__)
 +        if (chunk() || gDirect) {
 +#else
-@@ -2276,0 +4361 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2276,0 +4457 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +#endif
-@@ -2297,0 +4383,39 @@ size_t gNeed = 1;
+@@ -2297,0 +4479,39 @@ size_t gNeed = 1;
 +#if defined(__3DS__)
 +// The vertex window (re4_gx_fifo.h, the 3DS): the room of a FIFO draw whose head is in the stream,
 +// written by the game's inline vertex writes. Anything else that touches the stream closes it
@@ -6438,12 +6514,12 @@ index aaeaf967..a2a34db8 100644
 +}
 +#endif
 +
-@@ -2303,0 +4428,4 @@ void drain()
+@@ -2303,0 +4524,4 @@ void drain()
 +    RE4_PROF_SAMPLE(RE4_PROF_GX, 64);
 +#if defined(__3DS__)
 +    closeWindow();
 +#endif
-@@ -2315,0 +4444,21 @@ void drain()
+@@ -2315,0 +4540,21 @@ void drain()
 +#if defined(__3DS__)
 +        {
 +            int k = kStreamOther;
@@ -6465,7 +6541,7 @@ index aaeaf967..a2a34db8 100644
 +            gStreamBytes[k] += (u32) used;
 +        }
 +#endif
-@@ -2324,0 +4474,67 @@ void drain()
+@@ -2324,0 +4570,67 @@ void drain()
 +#if defined(__3DS__)
 +    openWindow();
 +#endif
@@ -6533,17 +6609,17 @@ index aaeaf967..a2a34db8 100644
 +{
 +    re4_gx_window = re4_gx_window_end = nullptr;  // the stream holds the whole draw
 +    drain();
-@@ -2325,0 +4542 @@ void drain()
+@@ -2325,0 +4638 @@ void drain()
 +#endif
-@@ -2328,0 +4546,3 @@ void feed(const uint8_t* bytes, size_t n)
+@@ -2328,0 +4642,3 @@ void feed(const uint8_t* bytes, size_t n)
 +#if defined(__3DS__)
 +    closeWindow();
 +#endif
-@@ -2330,0 +4551,3 @@ void feed(const uint8_t* bytes, size_t n)
+@@ -2330,0 +4647,3 @@ void feed(const uint8_t* bytes, size_t n)
 +#if defined(__3DS__)
 +    gFeeds++;
 +#endif
-@@ -2343,0 +4567,99 @@ extern "C" {
+@@ -2343,0 +4663,104 @@ extern "C" {
 +#if defined(__3DS__)
 +// (stage 41) the heads by the skinning jobs
 +int re4_gx_head_on;
@@ -6624,6 +6700,11 @@ index aaeaf967..a2a34db8 100644
 +            gTime[kTimeKept] / ms, gTime[kTimeTextures] / ms);
 +    memset(gTime, 0, sizeof(gTime));
 +    gStagedDraws = gStagedVertices = 0;
++    if (gBigDrawPieces || gBigGrids) {  // (2026-11-18)
++        re4_log("3ds: GX decoder: %u draws over the renderer's stage drawn in pieces, %u square grids from every %s-th "
++                "line since the last line", gBigDrawPieces, gBigGrids, getenv("RE4_3DS_BIGGRID") ? getenv("RE4_3DS_BIGGRID") : "4");
++        gBigDrawPieces = gBigGrids = 0;
++    }
 +    const double f = gDirectFrames - gTimeFrom ? gDirectFrames - gTimeFrom : 1;
 +    static const char* const kNames[kStreamKinds] = {"CP", "XF matrices", "XF normal matrices", "XF texture/light",
 +                                                     "XF registers", "BP", "draws", "owner tags", "list calls", "other"};
@@ -6643,11 +6724,11 @@ index aaeaf967..a2a34db8 100644
 +}
 +#endif
 +
-@@ -2350,0 +4673,3 @@ void re4_gx_mark(void)
+@@ -2350,0 +4774,3 @@ void re4_gx_mark(void)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2364,19 +4688,0 @@ void re4_gx_still(int on)
+@@ -2364,19 +4789,0 @@ void re4_gx_still(int on)
 -void re4_gx_movie(int on)
 -{
 -    gMovie.store(on != 0);
@@ -6667,14 +6748,14 @@ index aaeaf967..a2a34db8 100644
 -    return gWide.load();
 -}
 -
-@@ -2384,0 +4691,3 @@ void re4_gx_host_order_list(const void* list, unsigned int size)
+@@ -2384,0 +4792,3 @@ void re4_gx_host_order_list(const void* list, unsigned int size)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2419 +4728 @@ void re4_core_gx_release(const Re4GxChunk* chunk)
+@@ -2419 +4829 @@ void re4_core_gx_release(const Re4GxChunk* chunk)
 -void re4_gx_vi_next(const void* fb)
 +static void viNext(uint32_t fb, uint32_t)
-@@ -2422 +4731,12 @@ void re4_gx_vi_next(const void* fb)
+@@ -2422 +4832,12 @@ void re4_gx_vi_next(const void* fb)
 -    gViNext = (u32) (uintptr_t) fb & 0x03FFFFE0;  // as BP 0x4B holds a copy destination
 +    gViNext = fb & 0x03FFFFE0;  // as BP 0x4B holds a copy destination
 +}
@@ -6688,10 +6769,10 @@ index aaeaf967..a2a34db8 100644
 +    }
 +#endif
 +    viNext((uint32_t) (uintptr_t) fb, 0);
-@@ -2427 +4747 @@ void re4_gx_vi_next(const void* fb)
+@@ -2427 +4848 @@ void re4_gx_vi_next(const void* fb)
 -void re4_gx_vi_black(int black)
 +static void viBlack(uint32_t black, uint32_t)
-@@ -2432,0 +4753,11 @@ void re4_gx_vi_black(int black)
+@@ -2432,0 +4854,11 @@ void re4_gx_vi_black(int black)
 +void re4_gx_vi_black(int black)
 +{
 +#if defined(__3DS__)
@@ -6703,10 +6784,10 @@ index aaeaf967..a2a34db8 100644
 +    viBlack(black != 0, 0);
 +}
 +
-@@ -2435 +4766 @@ void re4_gx_vi_black(int black)
+@@ -2435 +4867 @@ void re4_gx_vi_black(int black)
 -void re4_gx_vi_flush(void)
 +static void viFlush(uint32_t, uint32_t)
-@@ -2441,0 +4773,11 @@ void re4_gx_vi_flush(void)
+@@ -2441,0 +4874,11 @@ void re4_gx_vi_flush(void)
 +void re4_gx_vi_flush(void)
 +{
 +#if defined(__3DS__)
@@ -6718,27 +6799,27 @@ index aaeaf967..a2a34db8 100644
 +    viFlush(0, 0);
 +}
 +
-@@ -2458,0 +4801,3 @@ void re4_gx_wait_jobs(void)
+@@ -2458,0 +4902,3 @@ void re4_gx_wait_jobs(void)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2466,0 +4812,3 @@ int re4_gx_threads(int n)
+@@ -2466,0 +4913,3 @@ int re4_gx_threads(int n)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2483,0 +4832,3 @@ void re4_gx_stats(unsigned out[11])
+@@ -2483,0 +4933,3 @@ void re4_gx_stats(unsigned out[11])
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2495,0 +4847,3 @@ void re4_gx_stats2(unsigned out[9])
+@@ -2495,0 +4948,3 @@ void re4_gx_stats2(unsigned out[9])
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2504,0 +4859,3 @@ unsigned re4_gx_bp(unsigned reg)
+@@ -2504,0 +4960,3 @@ unsigned re4_gx_bp(unsigned reg)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2510,0 +4868,3 @@ unsigned re4_gx_xf(unsigned address)
+@@ -2510,0 +4969,3 @@ unsigned re4_gx_xf(unsigned address)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif

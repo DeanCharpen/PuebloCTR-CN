@@ -398,7 +398,8 @@ void outline(u16* fb, int x, int y, int w, int h, u16 c)
 
 }  // namespace
 
-// The top of row `row` (0..6: the five cheats, the gyro, the frame counter) - also for the touch (setup_3ds.cpp)
+// The top of row `row` (0..7: the five cheats, the gyro, the frame counter, the circle pad's sensitivity) - also for
+// the touch (setup_3ds.cpp)
 extern "C" int re4_ui_setup_row_y(int row)
 {
     return row < 5 ? UI_S_ROW1_Y + row * UI_S_ROW_H : UI_S_ROW6_Y + (row - 5) * UI_S_ROW_H;
@@ -412,10 +413,10 @@ extern "C" int re4_ui_setup_hit(int x, int y, int* left)
     if (x < 8 || x >= 312) {
         return -1;
     }
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
         const int y0 = re4_ui_setup_row_y(i);
         if (y >= y0 && y < y0 + UI_S_ROW_H) {
-            *left = i == 5 && x >= UI_S_ARROW_L - 28 && x < (UI_S_ARROW_L + UI_S_GAIN_X) / 2;
+            *left = (i == 5 || i == 7) && x >= UI_S_ARROW_L - 28 && x < (UI_S_ARROW_L + UI_S_GAIN_X) / 2;
             return i;
         }
     }
@@ -457,7 +458,7 @@ extern "C" void re4_ui_setup(unsigned short* fb, const int* v, int lit)
     const u16 blood = rgb(90, 10, 10), bloodLit = rgb(170, 22, 18);
     fill(fb, 8, UI_S_LINE1_Y, 305, 1, blood);
     fill(fb, 8, UI_S_LINE2_Y, 305, 1, blood);
-    if (lit >= 0 && lit < 7) {
+    if (lit >= 0 && lit < 8) {
         const int y0 = re4_ui_setup_row_y(lit);
         fill(fb, 8, y0 + 1, 304, UI_S_ROW_H - 3, rgb(40, 30, 30));
         fill(fb, 8, y0 + UI_S_ROW_H - 2, 304, 1, bloodLit);
@@ -466,12 +467,14 @@ extern "C" void re4_ui_setup(unsigned short* fb, const int* v, int lit)
     versionText(fb, 308, UI_S_TITLE_BASE, kDim);  // (R7: the build's version; was UI_S_VERSION)
     pieceText(fb, kUiStr[lg][UI_S_CHEATS], 12, UI_S_SEC1_BASE, 0, kDim, false);
     pieceText(fb, kUiStr[lg][UI_S_GAME], 12, UI_S_SEC2_BASE, 0, kDim, false);
-    static const int kLabel[7] = {UI_S_HEALTH, UI_S_AMMO, UI_S_ONEHIT, UI_S_QTE, UI_S_MONEY, UI_S_GYRO, UI_S_FPS};
-    for (int i = 0; i < 7; i++) {
+    static const int kLabel[8] = {UI_S_HEALTH, UI_S_AMMO, UI_S_ONEHIT, UI_S_QTE,
+                                  UI_S_MONEY,  UI_S_GYRO, UI_S_FPS,    UI_S_STICK};
+    const int tb = UI_S_ROW_H / 2 + 4;  // (the text's baseline in a row: 13 of 19)
+    for (int i = 0; i < 8; i++) {
         const int y0 = re4_ui_setup_row_y(i);
         const bool on = v[i] != 0;
-        pieceText(fb, kUiStr[lg][kLabel[i]], 16, y0 + 14, 0, lit == i ? kBoneLit : on ? kBone : kBtnText, true);
-        if (i == 5) {
+        pieceText(fb, kUiStr[lg][kLabel[i]], 16, y0 + tb, 0, lit == i ? kBoneLit : on ? kBone : kBtnText, true);
+        if (i == 5 || i == 7) {
             continue;
         }
         const int by = y0 + (UI_S_ROW_H - UI_S_BOX) / 2;
@@ -492,7 +495,14 @@ extern "C" void re4_ui_setup(unsigned short* fb, const int* v, int lit)
     const int g = v[5];
     const int id = g >= 40 ? UI_S_G40 : g >= 30 ? UI_S_G30 : g >= 25 ? UI_S_G25 : g >= 20 ? UI_S_G20 : g >= 15 ? UI_S_G15
                  : g > 0 ? UI_S_G10 : UI_S_OFF;
-    pieceText(fb, kUiStr[lg][id], UI_S_GAIN_X, gy + 14, 1, g ? kBoneLit : kDim, g != 0);
+    pieceText(fb, kUiStr[lg][id], UI_S_GAIN_X, gy + tb, 1, g ? kBoneLit : kDim, g != 0);
+    // (2026-11-18) the circle pad's sensitivity: the same arrows, 1x (as it was) dim
+    const int sy = re4_ui_setup_row_y(7);
+    static const int kStick[4] = {UI_S_G10, UI_S_G12, UI_S_G15, UI_S_G20};
+    const int st = v[7] < 0 || v[7] > 3 ? 0 : v[7];
+    blit(fb, UI_SHAPE_ARROW_L, UI_S_ARROW_L, sy + UI_S_ROW_H / 2, kBtnText);
+    blit(fb, UI_SHAPE_ARROW_R, UI_S_ARROW_R, sy + UI_S_ROW_H / 2, kBtnText);
+    pieceText(fb, kUiStr[lg][kStick[st]], UI_S_GAIN_X, sy + tb, 1, st ? kBoneLit : kBone, st != 0);
     pieceText(fb, kUiStr[lg][UI_S_FOOT], 160, UI_S_FOOT_BASE, 1, kDim, false);
 }
 

@@ -43,9 +43,10 @@ L = dict(
     MAP_X=8, MAP_Y=73, MAP_W=304, MAP_H=128,  # the minimap's box (its zoom buttons inside, right)
     BTN_Y=208, BTN_H=27, BTN0_X=8, BTN1_X=164, BTN_W=148, BTN_BASE=226,
     # the settings before the gameplay: the title, a hairline, CHEATS and five rows,
-    # GAME and two rows (the gyro, the frame counter), a hairline, the footnote
-    S_TITLE_BASE=21, S_LINE1_Y=28, S_SEC1_BASE=41, S_ROW1_Y=45, S_ROW_H=21, S_SEC2_BASE=163, S_ROW6_Y=167,
-    S_LINE2_Y=213, S_FOOT_BASE=228, S_BOX=11, S_BOX_X=289, S_ARROW_L=228, S_ARROW_R=300, S_GAIN_X=264,
+    # GAME and three rows (the gyro, the frame counter, the circle pad's sensitivity), a hairline, the footnote
+    # (rows of 19: 21 with two rows under GAME)
+    S_TITLE_BASE=21, S_LINE1_Y=28, S_SEC1_BASE=41, S_ROW1_Y=45, S_ROW_H=19, S_SEC2_BASE=152, S_ROW6_Y=156,
+    S_LINE2_Y=215, S_FOOT_BASE=229, S_BOX=11, S_BOX_X=289, S_ARROW_L=228, S_ARROW_R=300, S_GAIN_X=264,
 )
 
 # (the strings below keep a seventh, Russian text: left out of the screen - zip drops it)
@@ -101,6 +102,10 @@ STRINGS = [
     ('S_G25', SERIF, 11, 0, ['2.5×', '2,5×', '2,5×', '2,5×', '2,5×', '2.5×']),
     ('S_G30', SERIF, 11, 0, '3×'),
     ('S_G40', SERIF, 11, 0, '4×'),
+    # the circle pad's sensitivity (3ds/input_3ds.cpp re4_3ds_stick_set): its row and the gain between 1× and 1.5×
+    ('S_STICK', SERIF_R, 11, 0, ['Circle Pad sensitivity', 'Sensibilité du pad circulaire', 'Schiebepad-Empfindlichkeit',
+                                 'Sensibilidad del botón deslizante', 'Sensibilità del pad scorrevole', 'スライドパッド感度']),
+    ('S_G12', SERIF, 11, 0, ['1.25×', '1,25×', '1,25×', '1,25×', '1,25×', '1.25×']),
     # (English only - the game's language is not known yet) the checks
     # at the start (3ds/startcheck_3ds.cpp, drawn by re4_ui_check). C_T_* the titles, C_F_* the footers, C_H_* the
     # headings of a problem, the rest its lines

@@ -68,12 +68,17 @@ const u64 kExitHold = 1000ull * CPU_TICKS_PER_MSEC;
 
 int gMax[4];  // circle pad x, y, C stick x, y: the largest magnitude seen
 u64 gExitSince;
+// (2026-11-18) The circle pad's sensitivity: its deflection that is a full stick to the game - the rim over the gain
+// (percent). The game takes a direction past 45 % of a full stick on an axis (PADClamp's 15 + game/pad.cpp STICK_ON 30
+// of 72; 51 % on a diagonal): at 1x nearly the whole way of a pad that no longer reaches its rim
+const int kStickGain[4] = {100, 125, 150, 200};
+int gStickRim = kRim;
 
-s8 axis(int v, int raw, int& seen)
+s8 axis(int v, int raw, int rim, int& seen)
 {
     const int m = v < 0 ? -v : v;
     seen = m > seen ? m : seen;
-    int r = v * raw / kRim;
+    int r = v * raw / rim;
     r = r > 127 ? 127 : r < -127 ? -127 : r;
     return (s8) r;
 }
@@ -352,10 +357,10 @@ void readPad(unsigned frame)
     circlePosition circle, cstick;
     hidCircleRead(&circle);
     hidCstickRead(&cstick);
-    pad.stickX = axis(circle.dx, kMainRaw, gMax[0]);
-    pad.stickY = axis(circle.dy, kMainRaw, gMax[1]);
-    pad.substickX = axis(cstick.dx, kCRaw, gMax[2]);
-    pad.substickY = axis(cstick.dy, kCRaw, gMax[3]);
+    pad.stickX = axis(circle.dx, kMainRaw, gStickRim, gMax[0]);
+    pad.stickY = axis(circle.dy, kMainRaw, gStickRim, gMax[1]);
+    pad.substickX = axis(cstick.dx, kCRaw, kRim, gMax[2]);
+    pad.substickY = axis(cstick.dy, kCRaw, kRim, gMax[3]);
     // digital shoulders: the trigger all the way (pad.cpp: the game takes the click or the value)
     pad.triggerL = (pad.buttons & kL) ? 0xFF : 0;
     pad.triggerR = (pad.buttons & kR) ? 0xFF : 0;
@@ -408,8 +413,23 @@ extern "C" void re4_3ds_gyro_set(int gain10)
     gGyro.gain = (float) gain10 / 10.0f;
 }
 
+// (2026-11-18; setup_3ds.cpp take, the game's thread as the gameplay starts) the circle pad's sensitivity from the
+// settings screen: 0 1x, 1 1.25x, 2 1.5x, 3 2x
+extern "C" void re4_3ds_stick_set(int index)
+{
+    const int gain = kStickGain[index < 0 || index > 3 ? 0 : index];
+    gStickRim = kRim * 100 / gain;
+    re4_log("3ds: circle pad: sensitivity %d %% (a full stick at %d of the rim's %d)", gain, gStickRim, kRim);
+}
+
 extern "C" void re4_3ds_input_start(void)
 {
+    if (const char* s = getenv("RE4_3DS_STICK")) {  // (2026-11-18) percent, for the runs without the settings screen
+        const int gain = atoi(s) < 100 ? 100 : atoi(s) > 300 ? 300 : atoi(s);
+        gStickRim = kRim * 100 / gain;
+        re4_log("3ds: circle pad: sensitivity %d %% (RE4_3DS_STICK; a full stick at %d of the rim's %d)", gain,
+                gStickRim, kRim);
+    }
     gyroStart();
     re4_add_frame_hook(readPad);
     aptHook(&gAptCookie, aptEvent, nullptr);
