@@ -160,7 +160,14 @@ PuebloPrep also has a console version, `puebloprep-cli` (`puebloprep-cli --help`
 
 ## Step 5: install the game
 
-Download from the [releases](../../releases) one of:
+The quickest way: start **FBI** on the console (connected to Wi-Fi), choose **Remote Install -> Scan QR Code** and
+point the camera at this code. It always gives the newest release, so the same code works for updates too.
+
+<p align="center">
+  <img src=".github/fbi-qr.png" alt="QR code for FBI: the newest PuebloCTR.cia" width="220">
+</p>
+
+Or download from the [releases](../../releases) one of:
 
 - **`PuebloCTR.cia`** (recommended): copy it to the SD card (for example into `/cia/`), start **FBI** on the console,
   open **SD -> cia**, select `PuebloCTR.cia`, **Install CIA**. PuebloCTR then appears on the HOME Menu.
@@ -230,7 +237,8 @@ SD card right after the game saves.
 ## Updating
 
 1. Back up `/3ds/pueblo/saves/memcard.bin`.
-2. Install the new `PuebloCTR.cia` with FBI over the old one (or replace `PuebloCTR.3dsx`).
+2. Install the new `PuebloCTR.cia` with FBI over the old one - scanning the [QR code](#step-5-install-the-game) again
+   is enough (or replace `PuebloCTR.3dsx`).
 3. The release notes say when the files from PuebloPrep must be made again; otherwise keep them. The start check says
    so too ("The texture pack does not fit this version").
 
