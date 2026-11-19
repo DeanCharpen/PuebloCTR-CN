@@ -30,7 +30,8 @@ everything the port needs from images of your discs.
     treasures and blue medallions still to find; separate floors; **+ / -** to zoom, a button to jump back to you, and
     drag it with a finger to look around.
 - **A settings screen** before you play (bottom screen): cheats one by one (infinite health, infinite ammo, one-hit
-  kills, automatic button prompts, +1,000,000 pesetas), the gyro, a frame counter, the Circle Pad's sensitivity.
+  kills, automatic button prompts, +1,000,000 pesetas), the gyro, the Circle Pad's sensitivity, the picture's fit to
+  the screen (with or without black bars) and a frame counter.
 - **The original movies** play through the console's hardware H.264 decoder, with sound; the European subtitles show
   as on the GameCube.
 - **Made for the New 3DS hardware**: a renderer on its PICA200 GPU, sound on its DSP, the game, the renderer and the
@@ -178,15 +179,21 @@ under [Troubleshooting](#troubleshooting).
 any other language gives English). To play in another one, change the system language in System Settings before
 starting. The US discs are in English.
 
-**The settings screen** is on the bottom screen while the game is at its title. Tap a row to change it:
+**The settings screen** is on the bottom screen while the game is at its title. It has three tabs - CHEATS,
+CONTROLS and SCREEN; tap a tab to open it and a row to change it:
 
-- cheats: infinite health, infinite ammo, one-hit kills, automatic button prompts (QTEs), +1,000,000 pesetas once;
-- **Gyro aim** (on at 2x by default): while you hold R to aim, turning the console turns the aim too; the arrows set
-  how strongly, down to off;
-- **Frame counter** in the corner of the game screen;
-- **Circle Pad sensitivity** (1x by default): how far the Circle Pad has to be pushed. The game was made for the
-  GameCube's long stick and wants about half of the pad's way before the character moves; if you have to push the pad
-  almost to its edge, raise it (1.25x, 1.5x, 2x). Higher values also make aiming with the pad quicker.
+- **CHEATS**: infinite health, infinite ammo, one-hit kills, automatic button prompts (QTEs), +1,000,000 pesetas once;
+- **CONTROLS**:
+  - **Gyro aim** (on at 2x by default): while you hold R to aim, turning the console turns the aim too; the arrows set
+    how strongly, down to off;
+  - **Circle Pad sensitivity** (1x by default): how far the Circle Pad has to be pushed. The game was made for the
+    GameCube's long stick and wants about half of the pad's way before the character moves; if you have to push the
+    pad almost to its edge, raise it (1.25x, 1.5x, 2x). Higher values also make aiming with the pad quicker;
+- **SCREEN**:
+  - **Picture**: **Fit** (by default) shows the whole picture with black bars at the sides, as the game made it;
+    **Stretch** fills the screen by widening the picture a little; **Zoom** fills it keeping the shape, cutting a
+    little off the top and bottom. The change shows at once on the title screen;
+  - **Frame counter** in the corner of the game screen.
 
 The choices apply when a game starts or loads, and are kept on the SD card (`/3ds/pueblo/settings.bin`). The version
 of your build is in the top right corner of this screen.

@@ -31,20 +31,22 @@ int re4_cheats_wanted(void);
 void re4_cheats_money_arm(void);                                // runtime/cheats.cpp (R2)
 void re4_3ds_gyro_set(int gain10);                              // input_3ds.cpp (R2)
 void re4_3ds_stick_set(int index);                              // input_3ds.cpp (2026-11-18)
+void re4_3ds_gx_fill(int mode);                                 // gx_3ds.cpp (2026-11-19)
 void re4_3ds_hud_fps(int on);                                   // settings_3ds.cpp (R2)
-void re4_ui_setup(unsigned short* fb, const int* v, int lit);   // ui_bottom_3ds.cpp (R2)
-int re4_ui_setup_hit(int x, int y, int* left);
+void re4_ui_setup(unsigned short* fb, const int* v, int lit, int tab);  // ui_bottom_3ds.cpp (R2; tabs 2026-11-19)
+int re4_ui_setup_hit(int tab, int x, int y, int* left);
 void re4_log(const char* fmt, ...);
 }
 
 namespace {
 
 const char kPath[] = "sdmc:/3ds/pueblo/settings.bin";
-const int kRows = 8, kGyroRow = 5, kStickRow = 7;  // (2026-11-18: row 7 the circle pad's sensitivity, 0..3)
+const int kRows = 9, kGyroRow = 5, kStickRow = 7;  // (2026-11-18: row 7 the circle pad's sensitivity, 0..3)
 const int kStickSteps = 4;
+const int kPictureRow = 8, kPictureSteps = 3;  // (2026-11-19: row 8 the picture, 0 Fit 1 Stretch 2 Zoom)
 const int kGains[] = {0, 10, 15, 20, 25, 30, 40};
 const int kGainCount = (int) (sizeof(kGains) / sizeof(kGains[0]));
-const int kDefaults[kRows] = {0, 0, 0, 0, 0, 20, 0, 0};  // (R0: the cheats off, the gyro on 2x, the counter off; the stick 1x)
+const int kDefaults[kRows] = {0, 0, 0, 0, 0, 20, 0, 0, 0};  // (R0: the cheats off, the gyro on 2x, the counter off; the stick 1x; Fit)
 
 struct File {
     char magic[4];  // "PCS1"
@@ -54,13 +56,15 @@ struct File {
     u8 gyro;        // the gain x10 (0 off)
     u8 fps;         // the frame counter
     u8 stick;       // (2026-11-18; padding before: 0) the circle pad's sensitivity 0..3: 1x 1.25x 1.5x 2x
-    u8 pad[2];
+    u8 picture;     // (2026-11-19; padding before: 0) the picture 0..2: Fit, Stretch, Zoom
+    u8 pad[1];
     u32 sum;        // FNV-1a of the bytes before
 };
 static_assert(sizeof(File) == 16, "settings.bin is 16 bytes");
 
-int gV[kRows] = {0, 0, 0, 0, 0, 20, 0, 0};  // the screen's values: the boxes 0/1, the gyro's gain x10, the stick's step
+int gV[kRows] = {0, 0, 0, 0, 0, 20, 0, 0, 0};  // the screen's values: the boxes 0/1, the gyro's gain x10, the steps
 volatile int gLit = -1;                  // the row under the finger
+volatile int gTab;                       // (2026-11-19) the open tab: 0 CHEATS (at each launch), 1 CONTROLS, 2 SCREEN
 bool gOn;                                // the screen (RE4_3DS_SETUP)
 volatile bool gInGame;                   // the title left for the gameplay
 bool gSawTitle;
@@ -111,6 +115,7 @@ void load()
     gV[5] = kGains[gainIndex(f.gyro)];
     gV[6] = f.fps ? 1 : 0;
     gV[kStickRow] = f.stick < kStickSteps ? f.stick : 0;
+    gV[kPictureRow] = f.picture < kPictureSteps ? f.picture : 0;
 }
 
 bool save()
@@ -124,6 +129,7 @@ bool save()
     f.gyro = (u8) gV[5];
     f.fps = (u8) (gV[6] ? 1 : 0);
     f.stick = (u8) gV[kStickRow];
+    f.picture = (u8) gV[kPictureRow];
     f.sum = fnv((const u8*) &f, offsetof(File, sum));
     FILE* fp = fopen(kPath, "r+b");  // (in place: the file keeps its cluster)
     if (!fp) {
@@ -150,9 +156,10 @@ void take()
     re4_3ds_gyro_set(gV[5]);
     re4_3ds_hud_fps(gV[6]);
     re4_3ds_stick_set(gV[kStickRow]);
-    re4_log("3ds: settings taken by the game: cheats %d%s, gyro %d.%dx, frame counter %s, stick step %d", bits,
+    re4_3ds_gx_fill(gV[kPictureRow]);
+    re4_log("3ds: settings taken by the game: cheats %d%s, gyro %d.%dx, frame counter %s, stick step %d, picture %d", bits,
             money ? ", +1 000 000 pesetas when Leon is free" : gV[4] ? " (the pesetas given this launch)" : "",
-            gV[5] / 10, gV[5] % 10, gV[6] ? "on" : "off", gV[kStickRow]);
+            gV[5] / 10, gV[5] % 10, gV[6] ? "on" : "off", gV[kStickRow], gV[kPictureRow]);
 }
 
 // the game's thread, each frame (after hudSample: its hook came first)
@@ -192,9 +199,14 @@ extern "C" void re4_3ds_setup_start(void)
         return;
     }
     load();
+    if (const char* t = getenv("RE4_3DS_SETUPTAB")) {  // (2026-11-19, the stand: a tab open from the start, 0..2)
+        gTab = atoi(t) < 0 || atoi(t) > 2 ? 0 : atoi(t);
+    }
+    re4_3ds_gx_fill(gV[kPictureRow]);  // (2026-11-19: the picture at once - the title shows it)
     re4_add_frame_hook(frame);
     re4_log("3ds: settings screen until the gameplay: cheats %d%d%d%d, pesetas %d, gyro %d, frame counter %d, "
-            "stick step %d", gV[0], gV[1], gV[2], gV[3], gV[4], gV[5], gV[6], gV[kStickRow]);
+            "stick step %d, picture %d", gV[0], gV[1], gV[2], gV[3], gV[4], gV[5], gV[6], gV[kStickRow],
+            gV[kPictureRow]);
 }
 
 // The panel's thread: the settings screen instead of the game's
@@ -217,7 +229,7 @@ extern "C" void re4_3ds_setup_draw(unsigned short* fb)
 {
     int v[kRows];
     memcpy(v, gV, sizeof(v));
-    re4_ui_setup(fb, v, gLit);
+    re4_ui_setup(fb, v, gLit, gTab);
 }
 
 // The panel's thread, each pass: the file half a second after the last change
@@ -252,7 +264,13 @@ extern "C" int re4_3ds_setup_touch(int phase, int x, int y)
         return 1;
     }
     int left = 0;
-    const int row = re4_ui_setup_hit(x, y, &left);
+    const int row = re4_ui_setup_hit(gTab, x, y, &left);
+    if (row <= -2) {  // (2026-11-19) a tab: opened
+        gTab = -2 - row;
+        gLit = -1;
+        gChanged = true;
+        return 1;
+    }
     if (row < 0 || row >= kRows) {
         return 1;
     }
@@ -267,12 +285,18 @@ extern "C" int re4_3ds_setup_touch(int phase, int x, int y)
     } else if (row == kStickRow) {  // (2026-11-18) the arrows as the gyro's: 2x -> 1x
         const int s = gV[kStickRow];
         gV[kStickRow] = left ? (s > 0 ? s - 1 : 0) : (s + 1) % kStickSteps;
+    } else if (row == kPictureRow) {  // (2026-11-19) the same arrows: Zoom -> Fit
+        const int s = gV[kPictureRow];
+        gV[kPictureRow] = left ? (s > 0 ? s - 1 : 0) : (s + 1) % kPictureSteps;
     } else {
         gV[row] = !gV[row];
     }
     gLit = row;
     gChanged = true;
     gWriteAt = svcGetSystemTick() + SYSCLOCK_ARM11 / 2;
+    if (row == kPictureRow) {
+        re4_3ds_gx_fill(gV[kPictureRow]);  // (2026-11-19: at once - seen on the title while it is chosen)
+    }
     re4_log("3ds: settings: row %d -> %d", row, gV[row]);
     return 1;
 }

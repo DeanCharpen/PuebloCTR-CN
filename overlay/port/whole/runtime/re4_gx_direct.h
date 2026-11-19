@@ -19,8 +19,9 @@ typedef struct Re4GxDirect {
      * memory (0x000-0x7FF) and XF registers (0x1000-0x1057) */
     void (*draw)(const Re4GxDraw* d, const void* vertices, const uint16_t* indices, const uint32_t* bp,
                  const uint32_t* xfMem, const uint32_t* xfReg);
-    /* XF changed at `address` (memory or 0x1000 + register), `count` words */
-    void (*xf)(uint32_t address, uint32_t count);
+    /* XF changed at `address` (memory or 0x1000 + register), `count` words: `words` (host order; the renderer keeps
+     * its own copy of the state, 2026-11-19) */
+    void (*xf)(uint32_t address, uint32_t count, const uint32_t* words);
     /* the owner tag of the draws that follow (re4_gx_frame.h RE4_GX_OP_OWNER) */
     void (*owner)(const uint32_t owner[4]);
     /* a display copy: the frame is complete */

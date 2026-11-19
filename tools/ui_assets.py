@@ -42,10 +42,10 @@ L = dict(
     LINE1_Y=68, LINE2_Y=204,           # the hairlines
     MAP_X=8, MAP_Y=73, MAP_W=304, MAP_H=128,  # the minimap's box (its zoom buttons inside, right)
     BTN_Y=208, BTN_H=27, BTN0_X=8, BTN1_X=164, BTN_W=148, BTN_BASE=226,
-    # the settings before the gameplay: the title, a hairline, CHEATS and five rows,
-    # GAME and three rows (the gyro, the frame counter, the circle pad's sensitivity), a hairline, the footnote
-    # (rows of 19: 21 with two rows under GAME)
-    S_TITLE_BASE=21, S_LINE1_Y=28, S_SEC1_BASE=41, S_ROW1_Y=45, S_ROW_H=19, S_SEC2_BASE=152, S_ROW6_Y=156,
+    # the settings before the gameplay: the title, a hairline, three tabs (CHEATS,
+    # CONTROLS, SCREEN: a player's wish brought more rows than one page holds), the open tab's rows, a hairline, the
+    # footnote
+    S_TITLE_BASE=21, S_LINE1_Y=28, S_TAB_Y=31, S_TAB_H=22, S_TAB_BASE=46, S_ROW1_Y=58, S_ROW_H=24,
     S_LINE2_Y=215, S_FOOT_BASE=229, S_BOX=11, S_BOX_X=289, S_ARROW_L=228, S_ARROW_R=300, S_GAIN_X=264,
 )
 
@@ -106,6 +106,16 @@ STRINGS = [
     ('S_STICK', SERIF_R, 11, 0, ['Circle Pad sensitivity', 'Sensibilité du pad circulaire', 'Schiebepad-Empfindlichkeit',
                                  'Sensibilidad del botón deslizante', 'Sensibilità del pad scorrevole', 'スライドパッド感度']),
     ('S_G12', SERIF, 11, 0, ['1.25×', '1,25×', '1,25×', '1,25×', '1,25×', '1.25×']),
+    # the picture on the top screen (3ds/gx_3ds.cpp re4_3ds_gx_fill; a player's wish: no bars): the game's
+    # 16:9 band fitted (as before), stretched to the screen's height, or zoomed to it (the sides cut)
+    ('S_PICTURE', SERIF_R, 11, 0, ['Picture', 'Image', 'Bild', 'Imagen', 'Immagine', '画面']),
+    ('S_FIT', SERIF, 10, 0, ['Fit', 'Ajustée', 'Passend', 'Ajustada', 'Adattata', '標準']),
+    ('S_STRETCH', SERIF, 10, 0, ['Stretch', 'Étirée', 'Gestreckt', 'Estirada', 'Allungata', '引き伸ばし']),
+    ('S_ZOOM', SERIF, 10, 0, ['Zoom', 'Zoom', 'Zoom', 'Zoom', 'Zoom', 'ズーム']),
+    # the settings screen's tabs
+    ('S_TAB_CHEATS', SERIF_R, 10, 2, ['CHEATS', 'TRICHES', 'CHEATS', 'TRUCOS', 'TRUCCHI', 'チート']),
+    ('S_TAB_CONTROLS', SERIF_R, 10, 2, ['CONTROLS', 'COMMANDES', 'STEUERUNG', 'CONTROLES', 'COMANDI', '操作']),
+    ('S_TAB_SCREEN', SERIF_R, 10, 2, ['SCREEN', 'ÉCRAN', 'BILDSCHIRM', 'PANTALLA', 'SCHERMO', '画面']),
     # (English only - the game's language is not known yet) the checks
     # at the start (3ds/startcheck_3ds.cpp, drawn by re4_ui_check). C_T_* the titles, C_F_* the footers, C_H_* the
     # headings of a problem, the rest its lines

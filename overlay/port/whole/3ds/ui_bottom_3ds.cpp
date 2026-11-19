@@ -398,33 +398,40 @@ void outline(u16* fb, int x, int y, int w, int h, u16 c)
 
 }  // namespace
 
-// The top of row `row` (0..7: the five cheats, the gyro, the frame counter, the circle pad's sensitivity) - also for
-// the touch (setup_3ds.cpp)
-extern "C" int re4_ui_setup_row_y(int row)
+// (2026-11-19) The settings screen's tabs (more rows than a page holds): CHEATS, CONTROLS, SCREEN - each its rows, as
+// the indices of setup_3ds.cpp's values (0..4 the cheats and the money, 5 the gyro, 6 the frame counter, 7 the circle
+// pad's sensitivity, 8 the picture); -1 ends a tab
+const int kTabRows[3][5] = {{0, 1, 2, 3, 4}, {5, 7, -1, -1, -1}, {8, 6, -1, -1, -1}};
+
+// The top of a tab's `slot`th row - also for the touch (setup_3ds.cpp)
+extern "C" int re4_ui_setup_row_y(int slot)
 {
-    return row < 5 ? UI_S_ROW1_Y + row * UI_S_ROW_H : UI_S_ROW6_Y + (row - 5) * UI_S_ROW_H;
+    return UI_S_ROW1_Y + slot * UI_S_ROW_H;
 }
 
-// The row under (x, y) (-1 none); *left: on the gyro's left arrow (from halfway to the label's end up to halfway
-// to the gain)
-extern "C" int re4_ui_setup_hit(int x, int y, int* left)
+// What is under (x, y) with the tab `tab` open: a value's row (0..8), -2 - t the tab t, -1 nothing; *left: on an arrow
+// row's left arrow (from halfway to the label's end up to halfway to the value)
+extern "C" int re4_ui_setup_hit(int tab, int x, int y, int* left)
 {
     *left = 0;
     if (x < 8 || x >= 312) {
         return -1;
     }
-    for (int i = 0; i < 8; i++) {
-        const int y0 = re4_ui_setup_row_y(i);
+    if (y >= UI_S_TAB_Y && y < UI_S_TAB_Y + UI_S_TAB_H) {
+        return -2 - (x - 8) * 3 / 304;
+    }
+    tab = tab < 0 || tab > 2 ? 0 : tab;
+    for (int s = 0; s < 5 && kTabRows[tab][s] >= 0; s++) {
+        const int y0 = re4_ui_setup_row_y(s);
         if (y >= y0 && y < y0 + UI_S_ROW_H) {
-            *left = (i == 5 || i == 7) && x >= UI_S_ARROW_L - 28 && x < (UI_S_ARROW_L + UI_S_GAIN_X) / 2;
+            const int i = kTabRows[tab][s];
+            *left = (i == 5 || i == 7 || i == 8) && x >= UI_S_ARROW_L - 28 && x < (UI_S_ARROW_L + UI_S_GAIN_X) / 2;
             return i;
         }
     }
     return -1;
 }
 
-// The whole screen into `fb`: v[0..4] the cheats and the money (0 / 1), v[5] the gyro's gain x10 (0 off, 10..40),
-// v[6] the frame counter; `lit` the row under the finger (-1 none)
 // The build's version (RE4_3DS_VERSION, ASCII) in the panel's 8x8 font, ending at `right`, on the baseline `base`;
 // its left end never left of x 168 (the titles' room): a longer text loses its first characters
 void versionText(u16* fb, int right, int base, u16 c)
@@ -450,31 +457,68 @@ void versionText(u16* fb, int right, int base, u16 c)
     }
 }
 
-extern "C" void re4_ui_setup(unsigned short* fb, const int* v, int lit)
+// The whole settings screen into `fb` with the tab `tab` open: v[0..4] the cheats and the money (0 / 1), v[5] the gyro's
+// gain x10 (0 off, 10..40), v[6] the frame counter, v[7] the circle pad's step, v[8] the picture; `lit` the value's row
+// under the finger (-1 none)
+extern "C" void re4_ui_setup(unsigned short* fb, const int* v, int lit, int tab)
 {
     gradient(fb);
     re4_ui_clip(0, 0, 320, 240);
     const int lg = lang();
-    const u16 blood = rgb(90, 10, 10), bloodLit = rgb(170, 22, 18);
+    const u16 blood = rgb(90, 10, 10), bloodLit = rgb(170, 22, 18), slab = rgb(40, 30, 30);
+    tab = tab < 0 || tab > 2 ? 0 : tab;
     fill(fb, 8, UI_S_LINE1_Y, 305, 1, blood);
     fill(fb, 8, UI_S_LINE2_Y, 305, 1, blood);
-    if (lit >= 0 && lit < 8) {
-        const int y0 = re4_ui_setup_row_y(lit);
-        fill(fb, 8, y0 + 1, 304, UI_S_ROW_H - 3, rgb(40, 30, 30));
-        fill(fb, 8, y0 + UI_S_ROW_H - 2, 304, 1, bloodLit);
-    }
     pieceText(fb, kUiStr[lg][UI_S_TITLE], 12, UI_S_TITLE_BASE, 0, kBone, true);
     versionText(fb, 308, UI_S_TITLE_BASE, kDim);  // (R7: the build's version; was UI_S_VERSION)
-    pieceText(fb, kUiStr[lg][UI_S_CHEATS], 12, UI_S_SEC1_BASE, 0, kDim, false);
-    pieceText(fb, kUiStr[lg][UI_S_GAME], 12, UI_S_SEC2_BASE, 0, kDim, false);
-    static const int kLabel[8] = {UI_S_HEALTH, UI_S_AMMO, UI_S_ONEHIT, UI_S_QTE,
-                                  UI_S_MONEY,  UI_S_GYRO, UI_S_FPS,    UI_S_STICK};
-    const int tb = UI_S_ROW_H / 2 + 4;  // (the text's baseline in a row: 13 of 19)
-    for (int i = 0; i < 8; i++) {
-        const int y0 = re4_ui_setup_row_y(i);
+    // (2026-11-19) the tabs: the open one on a slab with a blood-red underline, the others dim over a hairline
+    static const int kTab[3] = {UI_S_TAB_CHEATS, UI_S_TAB_CONTROLS, UI_S_TAB_SCREEN};
+    for (int t = 0; t < 3; t++) {
+        const int x0 = 8 + t * 304 / 3, x1 = 8 + (t + 1) * 304 / 3;
+        if (t == tab) {
+            fill(fb, x0 + 1, UI_S_TAB_Y, x1 - x0 - 2, UI_S_TAB_H, slab);
+            fill(fb, x0 + 1, UI_S_TAB_Y + UI_S_TAB_H - 2, x1 - x0 - 2, 2, bloodLit);
+        } else {
+            fill(fb, x0 + 1, UI_S_TAB_Y + UI_S_TAB_H - 1, x1 - x0 - 2, 1, blood);
+        }
+        pieceText(fb, kUiStr[lg][kTab[t]], (x0 + x1) / 2, UI_S_TAB_BASE, 1, t == tab ? kBoneLit : kDim, t == tab);
+    }
+    static const int kLabel[9] = {UI_S_HEALTH, UI_S_AMMO, UI_S_ONEHIT, UI_S_QTE,  UI_S_MONEY,
+                                  UI_S_GYRO,   UI_S_FPS,  UI_S_STICK,  UI_S_PICTURE};
+    static const int kStick[4] = {UI_S_G10, UI_S_G12, UI_S_G15, UI_S_G20};
+    static const int kPicture[3] = {UI_S_FIT, UI_S_STRETCH, UI_S_ZOOM};
+    const int tb = UI_S_ROW_H / 2 + 4;  // (the text's baseline in a row: 16 of 24)
+    for (int s = 0; s < 5 && kTabRows[tab][s] >= 0; s++) {
+        const int i = kTabRows[tab][s];
+        const int y0 = re4_ui_setup_row_y(s);
+        if (lit == i) {
+            fill(fb, 8, y0 + 1, 304, UI_S_ROW_H - 3, slab);
+            fill(fb, 8, y0 + UI_S_ROW_H - 2, 304, 1, bloodLit);
+        }
         const bool on = v[i] != 0;
-        pieceText(fb, kUiStr[lg][kLabel[i]], 16, y0 + tb, 0, lit == i ? kBoneLit : on ? kBone : kBtnText, true);
-        if (i == 5 || i == 7) {
+        // (the owner: a default value is no "off") dim: an unticked box and the gyro off; the stick's 1x, the picture's
+        // Fit as bright as any other value
+        const bool dim = i == 5 ? v[5] == 0 : i == 7 || i == 8 ? false : !on;
+        pieceText(fb, kUiStr[lg][kLabel[i]], 16, y0 + tb, 0, lit == i ? kBoneLit : dim ? kBtnText : kBone, true);
+        if (i == 5 || i == 7 || i == 8) {  // the arrows and the value between them
+            int id;
+            u16 c, arrow = kBtnText;
+            bool bright;
+            if (i == 5) {  // the gyro: off dim
+                const int g = v[5];
+                id = g >= 40 ? UI_S_G40 : g >= 30 ? UI_S_G30 : g >= 25 ? UI_S_G25 : g >= 20 ? UI_S_G20 : g >= 15 ? UI_S_G15
+                   : g > 0 ? UI_S_G10 : UI_S_OFF;
+                c = g ? kBoneLit : kDim, bright = g != 0, arrow = g ? kBtnText : kDim;
+            } else if (i == 7) {  // the circle pad's sensitivity: 1x (as it was) plain
+                const int st = v[7] < 0 || v[7] > 3 ? 0 : v[7];
+                id = kStick[st], c = st ? kBoneLit : kBone, bright = st != 0;
+            } else {  // the picture: Fit (as it was) plain
+                const int pm = v[8] < 0 || v[8] > 2 ? 0 : v[8];
+                id = kPicture[pm], c = pm ? kBoneLit : kBone, bright = pm != 0;
+            }
+            blit(fb, UI_SHAPE_ARROW_L, UI_S_ARROW_L, y0 + UI_S_ROW_H / 2, arrow);
+            blit(fb, UI_SHAPE_ARROW_R, UI_S_ARROW_R, y0 + UI_S_ROW_H / 2, arrow);
+            pieceText(fb, kUiStr[lg][id], UI_S_GAIN_X, y0 + tb, 1, c, bright);
             continue;
         }
         const int by = y0 + (UI_S_ROW_H - UI_S_BOX) / 2;
@@ -487,22 +531,6 @@ extern "C" void re4_ui_setup(unsigned short* fb, const int* v, int lit)
             outline(fb, UI_S_BOX_X, by, UI_S_BOX, UI_S_BOX, rgb(78, 68, 64));
         }
     }
-    // the gyro: the arrows and the gain between them
-    const int gy = re4_ui_setup_row_y(5);
-    const u16 arrow = v[5] ? kBtnText : kDim;
-    blit(fb, UI_SHAPE_ARROW_L, UI_S_ARROW_L, gy + UI_S_ROW_H / 2, arrow);
-    blit(fb, UI_SHAPE_ARROW_R, UI_S_ARROW_R, gy + UI_S_ROW_H / 2, arrow);
-    const int g = v[5];
-    const int id = g >= 40 ? UI_S_G40 : g >= 30 ? UI_S_G30 : g >= 25 ? UI_S_G25 : g >= 20 ? UI_S_G20 : g >= 15 ? UI_S_G15
-                 : g > 0 ? UI_S_G10 : UI_S_OFF;
-    pieceText(fb, kUiStr[lg][id], UI_S_GAIN_X, gy + tb, 1, g ? kBoneLit : kDim, g != 0);
-    // (2026-11-18) the circle pad's sensitivity: the same arrows, 1x (as it was) dim
-    const int sy = re4_ui_setup_row_y(7);
-    static const int kStick[4] = {UI_S_G10, UI_S_G12, UI_S_G15, UI_S_G20};
-    const int st = v[7] < 0 || v[7] > 3 ? 0 : v[7];
-    blit(fb, UI_SHAPE_ARROW_L, UI_S_ARROW_L, sy + UI_S_ROW_H / 2, kBtnText);
-    blit(fb, UI_SHAPE_ARROW_R, UI_S_ARROW_R, sy + UI_S_ROW_H / 2, kBtnText);
-    pieceText(fb, kUiStr[lg][kStick[st]], UI_S_GAIN_X, sy + tb, 1, st ? kBoneLit : kBone, st != 0);
     pieceText(fb, kUiStr[lg][UI_S_FOOT], 160, UI_S_FOOT_BASE, 1, kDim, false);
 }
 

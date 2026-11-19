@@ -291,6 +291,9 @@ u32 gOwnerData;
 // picture without the band (the menus). Chosen at a picture's begin by the picture before.
 u32 gPicW = 512, gPicH = 448;
 int gAspect = 2;
+// (2026-11-19, the settings screen's "Picture") the band on the top screen: 0 fitted in a TV's proportions (as before),
+// 1 stretched to the screen's height, 2 zoomed to it (the sides cut). re4_3ds_gx_fill, RE4_3DS_FILL
+volatile int gFill;
 // The screens before the game (the logos, the title menu, its load screen: STA_TITLE, title.cpp titleInit) draw their
 // own black bars (rows 0-56, 392-448) into 640 x 448: laid out as the scene's band (runtime/picture.cpp)
 extern "C" int re4_title_picture(void);
@@ -304,6 +307,13 @@ bool gBandKeep = true, gBandKnown;
 u32 gBandKept;
 int gNoBandRect[4] = {-1, -1, -1, -1}, gLastRect[4];
 const uint32_t* gLastBp;  // the decoder's BP registers (a draw's; BP 0x52 comes without them)
+// (2026-11-19, the GX thread's split, step 2) The renderer's own BP / XF state, led by bpWritten / xfChanged: the
+// draws read it, not the decoder's arrays (docs/21-gx-split.md). RE4_3DS_GXSHADOW=0 (the default since the split was
+// shelved, 2026-11-19): the decoder's, as before; 1: the shadow; 2: each draw's compared with the decoder's (gOwnDiff*:
+// draws that differ, the first word that does)
+int gOwnState = 0;
+u32 gOwnBp[0x100], gOwnXfMem[0x800], gOwnXfReg[0x58];
+u32 gOwnChecked, gOwnDiffBp, gOwnDiffXfMem, gOwnDiffXfReg, gOwnFirstAt = ~0u, gOwnFirstOwn, gOwnFirstTheirs;
 u32 gClearFrom = 1, gClears;  // RE4_3DS_COPYCLEAR=N: EFB copies clear their rectangle from picture N (0 never)
 
 void texRenderReplace();  // (R4)
@@ -326,8 +336,10 @@ void placePicture()
         gMapOx = gMapOy = 0.0f;
     } else if (gAspect == 2 && !gBand && (re4_title_picture() || (gBandKeep && gPicW == 640 && gPicH == 448))) {
         const float band = (float) (kTitleBandBottom - kTitleBandTop);
-        gMapSy = fminf(300.0f / h, 240.0f / band);
-        gMapSx = gMapSy * (h * 4.0f / 3.0f) / w;
+        const float fit = fminf(300.0f / h, 240.0f / band);
+        const int fill = gFill;  // (2026-11-19) the picture setting here too: stretched / zoomed to the screen's height
+        gMapSy = fill ? 240.0f / band : fit;
+        gMapSx = (fill == 2 ? gMapSy : fit) * (h * 4.0f / 3.0f) / w;
         gMapOx = 200.0f - gMapSx * w * 0.5f;
         gMapOy = 120.0f - gMapSy * (float) (kTitleBandTop + kTitleBandBottom) * 0.5f;
     } else if (gAspect == 1 || !gBand) {
@@ -338,8 +350,10 @@ void placePicture()
     } else {
         // the picture as wide as the screen; its height as a TV shows it (4:3), less if the band is taller than the screen
         const float band = (float) (gBandBottom - gBandTop);
-        gMapSy = fminf(300.0f / h, 240.0f / band);
-        gMapSx = gMapSy * (h * 4.0f / 3.0f) / w;
+        const float fit = fminf(300.0f / h, 240.0f / band);
+        const int fill = gFill;  // (2026-11-19) stretched / zoomed: the band as tall as the screen
+        gMapSy = fill ? 240.0f / band : fit;
+        gMapSx = (fill == 2 ? gMapSy : fit) * (h * 4.0f / 3.0f) / w;
         gMapOx = 200.0f - gMapSx * w * 0.5f;
         gMapOy = 120.0f - gMapSy * (float) (gBandTop + gBandBottom) * 0.5f;
     }
@@ -1863,8 +1877,22 @@ void uploadRows(const u32* xfMem)
     gRowsMax = -1;
 }
 
-void xfChanged(uint32_t address, uint32_t count)
+void xfChanged(uint32_t address, uint32_t count, const uint32_t* words)
 {
+    if (gOwnState) {  // (2026-11-19) the renderer's own state
+        if (address + count <= 0x800) {
+            memcpy(&gOwnXfMem[address], words, 4 * count);
+        } else {
+            for (u32 i = 0; i < count; i++) {
+                const u32 a = address + i;
+                if (a < 0x800) {
+                    gOwnXfMem[a] = words[i];
+                } else if (a >= 0x1000 && a < 0x1058) {
+                    gOwnXfReg[a - 0x1000] = words[i];
+                }
+            }
+        }
+    }
     // (stage 7.0) position and normal matrices with a batch open: the next draw may join it over them (joinMoved)
     if (gSpriteJoin && gBatch.open && !gBatch.kept && count && address + count <= 0x100) {
         for (u32 r = address / 4; r <= (address + count - 1) / 4; r++) {
@@ -2339,6 +2367,7 @@ struct StageInputs {
     u32 kc, ka;      // konstant selections
     int bufferReg;   // the GX register the combiner buffer holds (-1: none)
     int regInPrev;   // swapped: the GX register PREVIOUS holds (its colour), PREV's colour in the buffer
+    int alphaRegInPrev;  // (2026-11-19) swapped with its alpha too: PREVIOUS's alpha that register's, APREV the buffer's
     bool first;      // the first GX stage: PREV is the register's value
 };
 
@@ -2352,15 +2381,15 @@ In colorIn(u32 i, const StageInputs& c)
             return i == 0 ? constIn(gTevReg[0][0], gTevReg[0][1], gTevReg[0][2], false)
                           : constIn(gTevReg[0][3], gTevReg[0][3], gTevReg[0][3], false);
         }
-        if (i == 0 && c.regInPrev > 0) {
-            return In{GPU_PREVIOUS_BUFFER, rgb, false, false, false, {0, 0, 0}};
+        if (c.regInPrev > 0 && (i == 0 || c.alphaRegInPrev > 0)) {
+            return In{GPU_PREVIOUS_BUFFER, i == 0 ? rgb : a, false, false, false, {0, 0, 0}};
         }
         return In{GPU_PREVIOUS, i == 0 ? rgb : a, false, false, false, {0, 0, 0}};
     case 2: case 3: case 4: case 5: case 6: case 7: {
         const int r = (int) (i - 2) / 2 + 1;
         const bool alpha = i & 1;
-        if (c.regInPrev == r && !alpha) {
-            return In{GPU_PREVIOUS, rgb, false, false, false, {0, 0, 0}};
+        if ((c.regInPrev == r && !alpha) || (c.alphaRegInPrev == r && alpha)) {
+            return In{GPU_PREVIOUS, alpha ? a : rgb, false, false, false, {0, 0, 0}};
         }
         if (c.bufferReg == r) {
             return In{GPU_PREVIOUS_BUFFER, alpha ? a : rgb, false, false, false, {0, 0, 0}};
@@ -2408,10 +2437,16 @@ In alphaIn(u32 i, const StageInputs& c)
         if (c.first) {
             return constIn(gTevReg[0][3], 0, 0, true);
         }
+        if (c.alphaRegInPrev > 0) {
+            return In{GPU_PREVIOUS_BUFFER, a, false, false, false, {0, 0, 0}};  // (2026-11-19: swapped with the alpha)
+        }
         return In{GPU_PREVIOUS, a, false, false, false, {0, 0, 0}};
     case 1:
     case 2:
     case 3:
+        if (c.alphaRegInPrev == (int) i) {
+            return In{GPU_PREVIOUS, a, false, false, false, {0, 0, 0}};
+        }
         if (c.bufferReg == (int) i) {
             return In{GPU_PREVIOUS_BUFFER, a, false, false, false, {0, 0, 0}};
         }
@@ -2595,13 +2630,16 @@ bool swapFits(const uint32_t* bp, u32 s, u32 stages, u32 r, int bufferReg)
     if (s == 0) {
         return false;
     }
+    static const bool alphaToo = !getenv("RE4_3DS_TEVSWAPA") || atoi(getenv("RE4_3DS_TEVSWAPA")) != 0;  // (2026-11-19)
+    const u32 ad0 = (bp[0xC1 + 2 * s] >> 22) & 3;
+    const u32 adRun = alphaToo && ad0 == r ? r : 0;
     u32 t = s;
     for (; t < stages; t++) {
         const u32 cd = (bp[0xC0 + 2 * t] >> 22) & 3, ad = (bp[0xC1 + 2 * t] >> 22) & 3;
         if (cd == 0) {
             break;
         }
-        if (cd != r || ad != 0) {
+        if (cd != r || ad != adRun) {
             return false;
         }
     }
@@ -2940,7 +2978,7 @@ void buildTev(const uint32_t* bp)
     gUnits = 0;
     gStageCount = 0;
     gTevFill = false;
-    int bufferReg = -1, regInPrev = -1;
+    int bufferReg = -1, regInPrev = -1, alphaRegInPrev = -1;  // (alphaRegInPrev: 2026-11-19)
     bool prevOut = false;  // the last PICA stage's output is GX PREV
     const u32 fold = tevFold(bp, stages);  // (stage 6.8)
     gTevFolded += fold > 0;
@@ -3061,6 +3099,7 @@ void buildTev(const uint32_t* bp)
         c.ka = (s & 1) ? (ksel >> 19) & 31 : (ksel >> 9) & 31;
         c.bufferReg = bufferReg;
         c.regInPrev = regInPrev;
+        c.alphaRegInPrev = alphaRegInPrev;
         c.first = s == 0;
         const u32 ce = bp[0xC0 + 2 * s], ae = bp[0xC1 + 2 * s];
         PicaOp rgb[2], alpha[2];
@@ -3178,15 +3217,18 @@ void buildTev(const uint32_t* bp)
             } else if (prevOut && before >= 0 && before < 4 && swapFits(bp, s, stages, dest, bufferReg)) {
                 gStages[before].bufferOut = true;
                 regInPrev = (int) dest;
+                alphaRegInPrev = ((ae >> 22) & 3) == dest ? (int) dest : -1;  // (2026-11-19)
                 bufferReg = -1;
             } else {
                 gStages[gStageCount - 1].bufferOut = true;
                 bufferReg = (int) dest;
                 regInPrev = -1;
+                alphaRegInPrev = -1;
             }
             prevOut = false;
         } else {
             regInPrev = -1;
+            alphaRegInPrev = -1;
             prevOut = true;
         }
     }
@@ -3420,6 +3462,9 @@ void texRenderCopy(const uint32_t* bp)
 // signed for the registers, 8-bit for the konstants), and the registers that shape the combiners.
 void bpWritten(uint32_t reg, uint32_t value)
 {
+    if (gOwnState) {  // (2026-11-19) the renderer's own state, before gLastBp is read below
+        gOwnBp[reg & 0xFF] = value;
+    }
     // (stage 7.0) the TEV's registers: compared at the next draw (tevBpResolve), the batch left open
     const bool tevOnly = gSpriteJoin && ((reg >= 0x28 && reg <= 0x2F) || (reg >= 0xC0 && reg <= 0xE7) || reg == 0xF3 ||
                                          (reg >= 0xF6 && reg <= 0xFD));
@@ -4990,10 +5035,44 @@ void drawLines(const Re4GxDraw& d, const void* vertices, const uint16_t* indices
     gLineJoined += open && gBatch.open && gStats.gpuDraws == before;
 }
 
+// (2026-11-19, RE4_3DS_GXSHADOW=2) The renderer's own state against the decoder's at a draw
+void ownCheck(const uint32_t* bp, const uint32_t* xfMem, const uint32_t* xfReg)
+{
+    gOwnChecked++;
+    auto first = [](const u32* own, const u32* theirs, u32 n, u32 base) {
+        for (u32 i = 0; i < n; i++) {
+            if (own[i] != theirs[i]) {
+                if (gOwnFirstAt == ~0u) {
+                    gOwnFirstAt = base + i, gOwnFirstOwn = own[i], gOwnFirstTheirs = theirs[i];
+                }
+                return;
+            }
+        }
+    };
+    if (memcmp(gOwnBp, bp, sizeof(gOwnBp))) {
+        gOwnDiffBp++;
+        first(gOwnBp, bp, 0x100, 0x20000);  // (BP: 0x20000 + the register)
+    }
+    if (memcmp(gOwnXfMem, xfMem, sizeof(gOwnXfMem))) {
+        gOwnDiffXfMem++;
+        first(gOwnXfMem, xfMem, 0x800, 0);
+    }
+    if (memcmp(gOwnXfReg, xfReg, sizeof(gOwnXfReg))) {
+        gOwnDiffXfReg++;
+        first(gOwnXfReg, xfReg, 0x58, 0x1000);
+    }
+}
+
 void draw(const Re4GxDraw* dp, const void* vertices, const uint16_t* indices, const uint32_t* bp,
           const uint32_t* xfMem, const uint32_t* xfReg)
 {
     const u64 from = svcGetSystemTick();
+    if (gOwnState) {  // (2026-11-19) the renderer's own state for the decoder's
+        if (gOwnState == 2) {
+            ownCheck(bp, xfMem, xfReg);
+        }
+        bp = gOwnBp, xfMem = gOwnXfMem, xfReg = gOwnXfReg;
+    }
     drawTimed(dp, vertices, indices, bp, xfMem, xfReg);
     gStats.drawTicks += svcGetSystemTick() - from;
 }
@@ -5240,6 +5319,9 @@ extern "C" int re4_3ds_gx_init(void)
     if (const char* aspect = getenv("RE4_3DS_ASPECT")) {
         gAspect = atoi(aspect);
     }
+    if (const char* fill = getenv("RE4_3DS_FILL")) {  // (2026-11-19; the settings screen sets it at the gameplay)
+        gFill = atoi(fill) < 0 || atoi(fill) > 2 ? 0 : atoi(fill);
+    }
     if (const char* water = getenv("RE4_3DS_WATER")) {  // (the water's copy)
         gWaterOn = *water != '0';
     }
@@ -5330,6 +5412,10 @@ extern "C" int re4_3ds_gx_init(void)
         re4_log("3ds: textures not in the pack to %s%s", kMissPath, gMissFile ? "" : ": not opened");
     }
     gOn = true;
+    if (const char* own = getenv("RE4_3DS_GXSHADOW")) {  // (2026-11-19)
+        gOwnState = atoi(own);
+    }
+    re4_log("3ds: GX renderer: its own BP / XF state (RE4_3DS_GXSHADOW) %d", gOwnState);
     re4_gx_set_direct(&gDirect);
     re4_log("3ds: GX renderer on: staging %u KB vertices, %u KB indices, command buffer %u KB; mipmaps %d, texgen %d, batching %d, "
             "GPU test %d, display list cache %d, CPU and GPU together %d, lights %d (switches from b%d)",
@@ -5509,6 +5595,15 @@ extern "C" void re4_3ds_gx_home(int away)
             (unsigned long) vramSpaceFree() >> 10, dropped);
 }
 
+// (2026-11-19; setup_3ds.cpp take, the game's thread as the gameplay starts) the settings screen's "Picture": 0 Fit,
+// 1 Stretch, 2 Zoom (placePicture: from the next picture)
+extern "C" void re4_3ds_gx_fill(int mode)
+{
+    gFill = mode < 0 || mode > 2 ? 0 : mode;
+    re4_log("3ds: picture: %s (the settings screen)", gFill == 1 ? "stretched to the screen" : gFill == 2 ? "zoomed to the "
+            "screen, the sides cut" : "fitted");
+}
+
 extern "C" void re4_3ds_gx_idle(void)
 {
     if (gOn && gPipe) {
@@ -5605,13 +5700,21 @@ extern "C" void re4_3ds_gx_frame(int log)
     }
     re4_log("3ds: GX fog per picture (mode %d): %.0f draws, %.2f tables made", gFogMode, gStats.fogDraws / f,
             gStats.fogTables / f);
-    re4_log("3ds: screen (stage 5.4): aspect mode %d, picture %ux%u, band %d (rows %d-%d), EFB x %.4f + %.1f, y %.4f + %.1f; "
-            "%.2f copy clears per picture (from picture %u)",
-            gAspect, gPicW, gPicH, gBand, gBandTop, gBandBottom, gMapSx, gMapOx, gMapSy, gMapOy, gClears / f, gClearFrom);
+    re4_log("3ds: screen (stage 5.4): aspect mode %d, fill %d, picture %ux%u, band %d (rows %d-%d), EFB x %.4f + %.1f, "
+            "y %.4f + %.1f; %.2f copy clears per picture (from picture %u)",
+            gAspect, gFill, gPicW, gPicH, gBand, gBandTop, gBandBottom, gMapSx, gMapOx, gMapSy, gMapOy, gClears / f,
+            gClearFrom);
     if (gBandKept || gNoBandRect[0] != -1) {
         re4_log("3ds: screen: %u scene pictures without the band laid out by the last one (RE4_3DS_BANDKEEP %d); the "
                 "last such picture's scissor x %d-%d, y %d-%d", gBandKept, gBandKeep ? 1 : 0, gNoBandRect[0],
                 gNoBandRect[2], gNoBandRect[1], gNoBandRect[3]);
+    }
+    if (gOwnState == 2) {  // (2026-11-19)
+        re4_log("3ds: GX shadow (RE4_3DS_GXSHADOW 2): %u draws checked since the last line, differ: BP %u, XF memory %u, "
+                "XF registers %u; the first word that differed 0x%x: own 0x%08x, the decoder's 0x%08x",
+                gOwnChecked, gOwnDiffBp, gOwnDiffXfMem, gOwnDiffXfReg, gOwnFirstAt, gOwnFirstOwn, gOwnFirstTheirs);
+        gOwnChecked = gOwnDiffBp = gOwnDiffXfMem = gOwnDiffXfReg = 0;
+        gOwnFirstAt = ~0u;
     }
     static u32 waterCalls, refractCalls;
     const u32 calls = re4_gx_water_calls, refract = re4_gx_refract_calls;

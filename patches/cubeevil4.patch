@@ -4049,23 +4049,24 @@ index 389f40ea..f5baaba3 100644
 -            re4_log("gci: %s imported (%u blocks%s)", name, blocks, european ? ", European G4BP08 as G4BE08" : "");
 +            re4_log("gci: %s imported (%u blocks)", name, blocks);
 diff --git a/port/whole/runtime/gx_decode.cpp b/port/whole/runtime/gx_decode.cpp
-index aaeaf967..400313b7 100644
+index aaeaf967..23379c24 100644
 --- a/port/whole/runtime/gx_decode.cpp
 +++ b/port/whole/runtime/gx_decode.cpp
-@@ -30,0 +31,4 @@
+@@ -30,0 +31,5 @@
 +#include "re4_tex_dump.h"
 +#if defined(__3DS__)
 +#include "re4_gx_direct.h"
++#include "gx_restrip.h"
 +#endif
-@@ -33,0 +38 @@
+@@ -33,0 +39 @@
 +#include <dlfcn.h>
-@@ -37,0 +43 @@
+@@ -37,0 +44 @@
 +#include <new>
-@@ -42,0 +49 @@
+@@ -42,0 +50 @@
 +#include <unistd.h>
-@@ -43,0 +51 @@
+@@ -43,0 +52 @@
 +#include <unordered_set>
-@@ -126,0 +135,21 @@ Gp gGp;
+@@ -126,0 +136,21 @@ Gp gGp;
 +#if defined(__3DS__)
 +}  // namespace
 +// The register shadow (re4_gx_fifo.h): the words a write may be dropped on, kept by bpWrite and
@@ -4087,12 +4088,12 @@ index aaeaf967..400313b7 100644
 +}
 +#endif
 +
-@@ -270,4 +298,0 @@ std::atomic<bool> gStill(false);  // a menu screen of the game (re4_gx_still): R
+@@ -270,4 +299,0 @@ std::atomic<bool> gStill(false);  // a menu screen of the game (re4_gx_still): R
 -std::atomic<bool> gMovie(false);  // a movie plays (re4_gx_movie): RE4_GX_CHUNK_MOVIE
 -// the picture format "Native" (re4_gx_wide): the first load of the camera's projection in this chunk was the wide
 -// one (1), the game's 4:3 (0), none yet (-1): RE4_GX_CHUNK_WIDE
 -std::atomic<int> gWide(-1);
-@@ -326,0 +352,124 @@ Chunk* chunk()
+@@ -326,0 +353,124 @@ Chunk* chunk()
 +#if defined(__3DS__)
 +const Re4GxDirect* gDirect;  // re4_gx_set_direct: the renderer of the 3DS (port/whole/3ds/gx_3ds.cpp)
 +u32 gDirectFrames;           // display copies handed to it
@@ -4217,12 +4218,12 @@ index aaeaf967..400313b7 100644
 +    gOwnerChunks = 0;
 +}
 +
-@@ -543 +692 @@ void hintChunk()
+@@ -543 +693 @@ void hintChunk()
 -            re4cpu::KeepOffSlowCores(cores, sizeof(cores), re4cpu::kGameThread);
 +            re4cpu::KeepOffSlowCores(cores, sizeof(cores));
-@@ -605,0 +755 @@ void chunkBoundary(u32 xfb, u32 width, u32 height)
+@@ -605,0 +756 @@ void chunkBoundary(u32 xfb, u32 width, u32 height)
 +    RE4_PROF_ZONE(RE4_PROF_GX_FRAME);
-@@ -606,0 +757,7 @@ void chunkBoundary(u32 xfb, u32 width, u32 height)
+@@ -606,0 +758,7 @@ void chunkBoundary(u32 xfb, u32 width, u32 height)
 +    ownerChunk();
 +#if defined(__3DS__)
 +    if (gDirect) {
@@ -4230,24 +4231,24 @@ index aaeaf967..400313b7 100644
 +        gDirectFrames++;
 +    }
 +#endif
-@@ -648,3 +804,0 @@ void chunkBoundary(u32 xfb, u32 width, u32 height)
+@@ -648,3 +805,0 @@ void chunkBoundary(u32 xfb, u32 width, u32 height)
 -    // "Native": what this picture's first load of the camera's projection was; the next picture decides anew,
 -    // also while no chunk is recorded (no renderer, a dropped chunk: else a 4:3 load of long before would stay)
 -    const int wide = gWide.exchange(-1);
-@@ -660,6 +813,0 @@ void chunkBoundary(u32 xfb, u32 width, u32 height)
+@@ -660,6 +814,0 @@ void chunkBoundary(u32 xfb, u32 width, u32 height)
 -        if (gMovie.load()) {
 -            v.flags |= RE4_GX_CHUNK_MOVIE;
 -        }
 -        if (wide == 1) {
 -            v.flags |= RE4_GX_CHUNK_WIDE;
 -        }
-@@ -1642,0 +1791,5 @@ bool addEntry(u32 vat, const Format& f, const DrawArrays& arrays, const u8* data
+@@ -1642,0 +1792,5 @@ bool addEntry(u32 vat, const Format& f, const DrawArrays& arrays, const u8* data
 +#if defined(__3DS__)
 +u32 gBigDrawPieces;  // (2026-11-18) draws over the renderer's stage cut into pieces (the log: since the last line)
 +u32 gBigGrids;       // (2026-11-18) of them square strip grids drawn from every RE4_3DS_BIGGRID-th line
 +#endif
 +
-@@ -1649,0 +1803,126 @@ void draw(u8 op, u32 count, const u8* data, bool be, bool stable)
+@@ -1649,0 +1804,126 @@ void draw(u8 op, u32 count, const u8* data, bool be, bool stable)
 +#if defined(__3DS__)
 +    if (gDirect && count) {
 +        // the vertices straight into the renderer's memory, the draw handed over at once
@@ -4374,7 +4375,7 @@ index aaeaf967..400313b7 100644
 +        return;
 +    }
 +#endif
-@@ -1800,0 +2080,51 @@ u32 gLoggedMissing;
+@@ -1800,0 +2081,51 @@ u32 gLoggedMissing;
 +#if !defined(__3DS__)
 +// RE4_TEXDUMP=DIR (stage 5.7a): each texture bound, once a run, to DIR/tex-<pid>.dump (re4_tex_dump.h): level 0 and
 +// the palette, for the 3DS's pack of PICA textures (port/whole/3ds/tools/texpak.cpp)
@@ -4426,7 +4427,7 @@ index aaeaf967..400313b7 100644
 +}
 +#endif
 +
-@@ -1886,0 +2217,26 @@ void bindMap(u32 map)
+@@ -1886,0 +2218,26 @@ void bindMap(u32 map)
 +#if !defined(__3DS__)
 +    if (bound.key != 0 && !(bound.flags & RE4_GX_TEX_COPY) && bound.dataBytes) {
 +        dumpTexture(t, re4gx::memory(t.address, bound.dataBytes));
@@ -4453,30 +4454,30 @@ index aaeaf967..400313b7 100644
 +        return;
 +    }
 +#endif
-@@ -1924,0 +2281,3 @@ void bindTextures()
+@@ -1924,0 +2282,3 @@ void bindTextures()
 +#if defined(__3DS__)
 +    PartTimer timer(kTimeTextures);
 +#endif
-@@ -1948,0 +2308,5 @@ void bindTextures()
+@@ -1948,0 +2309,5 @@ void bindTextures()
 +#if defined(__3DS__)
 +// Register writes per picture (re4_gx_kept_report): all and those that changed the state
 +u32 gStateBp, gStateBpChanged, gStateXf, gStateXfChanged, gStateXfWords, gStateCp;
 +#endif
 +
-@@ -1950,0 +2315,3 @@ void cpWrite(u8 reg, u32 value)
+@@ -1950,0 +2316,3 @@ void cpWrite(u8 reg, u32 value)
 +#if defined(__3DS__)
 +    gStateCp++;
 +#endif
-@@ -1951,0 +2319,2 @@ void cpWrite(u8 reg, u32 value)
+@@ -1951,0 +2320,2 @@ void cpWrite(u8 reg, u32 value)
 +    // (only on a change: the game writes VCD and the matrix indices for each model, mostly as they were; the formats
 +    // worked out again at each were ~1 us a list of the cache on bench7, stage 3.8)
-@@ -1953 +2322,4 @@ void cpWrite(u8 reg, u32 value)
+@@ -1953 +2323,4 @@ void cpWrite(u8 reg, u32 value)
 -        memset(gFormatValid, 0, sizeof(gFormatValid));  // every format reads these
 +        const u32 old = reg == 0x30 ? gGp.matIndexA : reg == 0x40 ? gGp.matIndexB : reg == 0x50 ? gGp.vcdLo : gGp.vcdHi;
 +        if (value != old) {
 +            memset(gFormatValid, 0, sizeof(gFormatValid));  // every format reads these
 +        }
-@@ -1955 +2327,10 @@ void cpWrite(u8 reg, u32 value)
+@@ -1955 +2328,10 @@ void cpWrite(u8 reg, u32 value)
 -        gFormatValid[reg & 7] = false;
 +        const u32 old = reg < 0x80 ? gGp.vatA[reg & 7] : reg < 0x90 ? gGp.vatB[reg & 7] : gGp.vatC[reg & 7];
 +        if (value != old) {
@@ -4488,27 +4489,39 @@ index aaeaf967..400313b7 100644
 +    if (reg == 0x30 || reg == 0x40 || reg == 0x50 || reg == 0x60 || (reg >= 0x70 && reg < 0xA0)) {
 +        re4_gx_cp_shadow[reg] = value;
 +        re4_gx_cp_known[reg] = 1;
-@@ -1956,0 +2338 @@ void cpWrite(u8 reg, u32 value)
+@@ -1956,0 +2339 @@ void cpWrite(u8 reg, u32 value)
 +#endif
-@@ -1973,0 +2356,3 @@ void cpWrite(u8 reg, u32 value)
+@@ -1973,0 +2357,3 @@ void cpWrite(u8 reg, u32 value)
 +#if defined(__3DS__)
 +        gStaticArrays = false;
 +#endif
-@@ -1976,0 +2362,3 @@ void cpWrite(u8 reg, u32 value)
+@@ -1976,0 +2363,3 @@ void cpWrite(u8 reg, u32 value)
 +#if defined(__3DS__)
 +        gStaticArrays = false;
 +#endif
-@@ -2010,0 +2399,9 @@ void xfWrite(u32 address, const u8* data, u32 count, bool be)
+@@ -2010,0 +2400,21 @@ void xfWrite(u32 address, const u8* data, u32 count, bool be)
 +#if defined(__3DS__)
 +    gStateXf++;
 +    gStateXfWords += count;
 +    if (changed && gDirect) {
 +        gStateXfChanged++;
 +        RE4_PROF_SAMPLE(RE4_PROF_F_HOOKS, 16);
-+        gDirect->xf(address, count);
++        // the words as they are held now (2026-11-19: the renderer's own state); a range over both, word by word
++        const u32* words = address + count <= 0x800 ? &gGp.xfMem[address]
++                           : address >= 0x1000 && address + count <= 0x1058 ? &gGp.xfReg[address - 0x1000]
++                                                                             : nullptr;
++        if (words) {
++            gDirect->xf(address, count, words);
++        } else {
++            for (u32 i = 0; i < count; i++) {
++                if (const u32* slot = xfSlot(address + i)) {
++                    gDirect->xf(address + i, 1, slot);
++                }
++            }
++        }
 +    }
 +#endif
-@@ -2070,0 +2468,61 @@ bool isAction(u8 reg)
+@@ -2070,0 +2481,61 @@ bool isAction(u8 reg)
 +}  // namespace
 +
 +// The water's copy of the frame (game/trans.cpp GetEfbTex, patch 0328): the address it goes to (physical, as BP 0x4B
@@ -4570,16 +4583,16 @@ index aaeaf967..400313b7 100644
 +
 +namespace {
 +
-@@ -2110,0 +2569,4 @@ void bpWrite(u32 word)
+@@ -2110,0 +2582,4 @@ void bpWrite(u32 word)
 +#if defined(__3DS__)
 +        // while a mask waits no write may be dropped (the masked one acts on part of the word)
 +        re4_gx_shadow_masked(value != 0xFFFFFF);
 +#endif
-@@ -2112,0 +2575,3 @@ void bpWrite(u32 word)
+@@ -2112,0 +2588,3 @@ void bpWrite(u32 word)
 +#if defined(__3DS__)
 +    re4_gx_shadow_masked(false);
 +#endif
-@@ -2115,0 +2581,12 @@ void bpWrite(u32 word)
+@@ -2115,0 +2594,12 @@ void bpWrite(u32 word)
 +#if defined(__3DS__)
 +    {
 +        // the shadow: the same word again changes nothing, but for the registers that act on each
@@ -4592,7 +4605,7 @@ index aaeaf967..400313b7 100644
 +        }
 +    }
 +#endif
-@@ -2116,0 +2594,11 @@ void bpWrite(u32 word)
+@@ -2116,0 +2607,11 @@ void bpWrite(u32 word)
 +#if defined(__3DS__)
 +    gStateBp++;
 +    // (the water's copy, BP 0x52 to re4_gx_water_addr: each write is a copy, the same word again too)
@@ -4604,11 +4617,11 @@ index aaeaf967..400313b7 100644
 +        gDirect->bp(reg, now);
 +    }
 +#endif
-@@ -2153 +2641,2 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth);
+@@ -2153 +2654,2 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth);
 -void callDisplayList(u32 address, u32 size, int depth)
 +// The port's owner tag (command 0x02, or straight in: re4gx::directOwner)
 +void ownerCommand(const u32 owner[4])
-@@ -2155,3 +2644,4 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2155,3 +2657,4 @@ void callDisplayList(u32 address, u32 size, int depth)
 -    gStats.calls++;
 -    if (depth > 0) {
 -        return;  // the GP does not nest display lists
@@ -4616,7 +4629,7 @@ index aaeaf967..400313b7 100644
 +#if defined(__3DS__)
 +    if (owner[0] == 0x5458524Eu) {  // 'TXRN' (R4)
 +        re4_gx_texrender_pass = owner[1] == 1;
-@@ -2159,6 +2649,2 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2159,6 +2662,2 @@ void callDisplayList(u32 address, u32 size, int depth)
 -    const u8* list = re4gx::listMemory(address, size);
 -    if (!list) {
 -        if (gUnknownLogged++ < 8) {
@@ -4625,7 +4638,7 @@ index aaeaf967..400313b7 100644
 -        return;
 +    if (gDirect) {
 +        gDirect->owner(owner);
-@@ -2166,6 +2652,3 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2166,6 +2665,3 @@ void callDisplayList(u32 address, u32 size, int depth)
 -    gStats.dlBytes += size;
 -    gListBytes += size;
 -    bool be = true;
@@ -4635,7 +4648,7 @@ index aaeaf967..400313b7 100644
 +#endif
 +    if (chunk()) {
 +        emit(RE4_GX_OP_OWNER, owner, 4);
-@@ -2173,8 +2656,77 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2173,8 +2669,79 @@ void callDisplayList(u32 address, u32 size, int depth)
 -    size_t at = 0;
 -    while (at < size) {
 -        size_t need = 0;
@@ -4678,6 +4691,8 @@ index aaeaf967..400313b7 100644
 +    bool never;
 +    bool full;       // dynamic: more than the positions changes (the check): converted whole each frame
 +    bool split;      // dynamic: the template's rest in the room (vertices), the positions and normals apart (3.8)
++    bool reordered;  // (2026-11-18) its triangles in another order than the list's (keptVcache)
++    u32 tris;        // (2026-11-18) its triangles
 +    u32 retry;
 +    u32 lastFrame, gxDraws, gxVertices;
 +    Re4GxDraw draw;
@@ -4721,9 +4736,9 @@ index aaeaf967..400313b7 100644
 +    KeptFront& fr = keptFront(at);
 +    if (fr.at == at) {
 +        fr.at = 0;
-@@ -2181,0 +2734 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2181,0 +2749 @@ void callDisplayList(u32 address, u32 size, int depth)
 +    gKept.erase(at);
-@@ -2182,0 +2736,16 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2182,0 +2751,25 @@ void callDisplayList(u32 address, u32 size, int depth)
 +u32 gKeptBytes;
 +struct KeptStats {
 +    u32 hits, made, never, failed, evicted, rebuilt, uniqueVertices, rawVertices, dynHits, dynMade, dynVertices;
@@ -4735,23 +4750,32 @@ index aaeaf967..400313b7 100644
 +    // the failed by why (stage 6.3, r106): over kKeptBudget, the C heap (the list's copy), the renderer's keep (its
 +    // arena nor linear memory); the largest of them, bytes
 +    u32 failBudget, failHeap, failRoom, failMax;
++    // (2026-11-18, RE4_3DS_VCACHE) lists made anew for the vertex cache: their indices and vertices shaded before
++    // and after, the time; lists left as they were (the order matters: their indices; the new no cheaper; no memory);
++    // draws of reordered lists of one or two triangles where the order matters (a quad's two cannot overlap);
++    // reordered lists of more met in such a state: made again in the list's own order and kept so (vcPinned)
++    u32 vcLists, vcIndices[2], vcShaded[2], vcOrder, vcOrderIndices, vcNoGain, vcNoRoom, vcOrderDraws, vcPinned;
++    u32 vcSmall;       // small triangle lists left for the renderer's sprite join
++    u32 pieceBridged;  // (plan 5b) indices of pieces outside the view drawn all the same between visible ones
++    u32 pieceWhole;    // (plan 5b) lists in pieces drawn whole by their box, no piece tested
++    u64 vcNs;
 +};
 +int gDynamicKeep = -1;  // RE4_3DS_SKINCACHE (-1: not read yet)
 +int gSkinTemplate = -1; // RE4_3DS_SKINTEMPLATE (-1: not read yet)
 +int gSplitFrom = -1;    // RE4_3DS_SPLIT=N: dynamic lists split from the decoder's frame N (0 never; -1 not read yet)
 +KeptStats gKeptStats;
-@@ -2184,3 +2753 @@ void callDisplayList(u32 address, u32 size, int depth)
+@@ -2184,3 +2777 @@ void callDisplayList(u32 address, u32 size, int depth)
 -// One command at p (n bytes available): its length, or 0 when it is cut off
 -// (*need: the bytes it takes).
 -size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +u64 keptSample(const u8* list, u32 size)
-@@ -2188,3 +2755,2 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2188,3 +2779,2 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -    *need = 1;
 -    if (n == 0) {
 -        return 0;
 +    if (size <= 192) {
 +        return hashBytes(list, size, size);
-@@ -2192,8 +2758,80 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2192,8 +2782,80 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -    u8 op = p[0];
 -    switch (op) {
 -    case 0x00:  // NOP
@@ -4840,7 +4864,7 @@ index aaeaf967..400313b7 100644
 +    {
 +        for (int m = 0; m <= 128; m++) {
 +            k[m] = (u8) (m <= 64 ? 127 : 8128 / m);
-@@ -2201,7 +2839,46 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2201,7 +2863,46 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -        gStats.commands++;
 -        cpWrite(p[1], rd32(p + 2, be));
 -        return 6;
@@ -4894,7 +4918,7 @@ index aaeaf967..400313b7 100644
 +        memcpy(out, full, 12);
 +        if (head == 16) {
 +            packNormal(full + 12, out + 12);
-@@ -2209,5 +2886,17 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2209,5 +2910,17 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -        u32 head = rd32(p + 1, be);
 -        size_t count = (head >> 16) + 1;
 -        *need = 5 + 4 * count;
@@ -4917,13 +4941,13 @@ index aaeaf967..400313b7 100644
 +        if (gScratchShort++ < 8) {
 +            re4_log("GX: a scratch buffer of %u KB without room in the C heap (a check left out, or the list drawn "
 +                    "as before)", (unsigned) ((n * sizeof(T)) >> 10));
-@@ -2215,4 +2904 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2215,4 +2928 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -        gStats.commands++;
 -        gStats.xf++;
 -        xfWrite(head & 0xFFFF, p + 5, (u32) count, be);
 -        return *need;
 +        return false;
-@@ -2220,7 +2906,31 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2220,7 +2930,31 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -    case 0x20:
 -    case 0x28:
 -    case 0x30:
@@ -4962,7 +4986,7 @@ index aaeaf967..400313b7 100644
 +            }
 +            f.posBlock[0](out + (size_t) done * stride, stride, gBlock.pos, n, f.posScale);
 +            done += n;
-@@ -2228,7 +2938,8 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2228,7 +2962,8 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -        gStats.commands++;
 -        xfIndexed(op, rd32(p + 1, be));
 -        return 5;
@@ -4978,14 +5002,10 @@ index aaeaf967..400313b7 100644
 +        if (gPackS8From < 0) {
 +            const char* v = getenv("RE4_GX_PACKS8");
 +            gPackS8From = v ? atoi(v) : 1;
-@@ -2236,7 +2947,1230 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2236,3 +2971,1632 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 -        gStats.commands++;
 -        callDisplayList(rd32(p + 1, be), rd32(p + 5, be), depth);
 -        return 9;
--    case 0x02: {  // the port's owner tag (gx_fifo.cpp re4_gx_put_owner, patch 0137)
--        *need = 17;
--        if (n < 17) {
--            return 0;
 +        const bool s8 = f.nrmFormat == 1 && gPackS8From && gDirectFrames >= (u32) gPackS8From;
 +        for (u32 done = 0; done < count;) {
 +            const u32 n = count - done < kBlock ? count - done : kBlock;
@@ -5676,6 +5696,7 @@ index aaeaf967..400313b7 100644
 +// Plan 5b: big static lists in pieces (RE4_3DS_PIECES=N indices a piece, 0 off; RE4_3DS_PIECESFROM=N)
 +int gPieceIndices = -1;
 +u32 gPiecesFrom;
++u32 gPieceGap = 384;  // RE4_3DS_PIECEGAP=N: at most N indices outside the view drawn between visible pieces (0: none)
 +
 +void piecesRead()
 +{
@@ -5684,6 +5705,8 @@ index aaeaf967..400313b7 100644
 +        gPieceIndices = e ? atoi(e) : 256;
 +        const char* from = getenv("RE4_3DS_PIECESFROM");
 +        gPiecesFrom = from ? (u32) atoi(from) : 1;
++        const char* gap = getenv("RE4_3DS_PIECEGAP");
++        gPieceGap = gap ? (u32) atoi(gap) : 384;
 +    }
 +}
 +
@@ -5738,6 +5761,95 @@ index aaeaf967..400313b7 100644
 +    return shorter;
 +}
 +
++// (2026-11-18) The PICA's post-transform vertex cache: the list's triangles as strips made anew and in the order that
++// shades the fewest vertices (gx_restrip.h). RE4_3DS_VCACHE=0: the list's own strips, as before.
++int gVcache = -1;
++u32 gVcacheK = 24, gVcacheCut = 16;
++// The lists (keptList's address, the key's hash) met reordered in a state where the order matters: their own order
++// from then on (the same list drawn in two passes: with the depth written, then blended without)
++std::unordered_map<uintptr_t, u64> gKeptOwnOrder;
++
++// The state the list is drawn with now shows its triangles the same in any order: the depth test and update on with
++// an ordering compare, no logic op or subtraction (as sms-3ds orderWhy). Blending: the game draws nearly all (99 % of
++// the indices: BP 0x41 = 0x4bd, source alpha over, with the depth written) blended, its translucent parts apart
++// without the depth update; so with RE4_3DS_VCACHE=2 (the default) blending with the depth written counts as free -
++// the order shows only where a list's own triangles overlap with alpha below 1 (the list's order is not by depth
++// either); 1: no blending at all (next to nothing reordered).
++bool keptOrderFree()
++{
++    const u32 z = gGp.bp[0x40], c = gGp.bp[0x41];
++    const u32 fn = (z >> 1) & 7;  // never, less, equal, lequal, greater, nequal, gequal, always
++    if ((c & 2) || (c & (1u << 11)) || ((c & 1) && gVcache < 2)) {
++        return false;
++    }
++    return (z & 1) && (z & 0x10) && (fn == 1 || fn == 3 || fn == 4 || fn == 6);
++}
++
++// tri: the list's triangles (n indices); ix / kept / asStrip: the choice so far, replaced where the new strip is
++// cheaper (an index ~50 ns, a shaded vertex ~100 ns on the console); starts: the parts' beginnings then
++bool keptVcache(uintptr_t at, u64 keyHash, const u16* tri, u32 n, u32 count, std::vector<u16>& ix, u32& kept,
++                bool& asStrip, std::vector<u32>* starts)
++{
++    if (gVcache < 0) {
++        const char* e = getenv("RE4_3DS_VCACHE");
++        gVcache = e ? atoi(e) : 2;
++        const char* k = getenv("RE4_3DS_VCACHE_K");
++        gVcacheK = k && atoi(k) > 0 ? (u32) atoi(k) : 24;
++        const char* c = getenv("RE4_3DS_VCACHE_CUT");
++        gVcacheCut = c && atoi(c) > 0 ? (u32) atoi(c) : 16;
++    }
++    if (!gVcache || n < 6) {
++        return false;
++    }
++    // a small triangle list is staged by the renderer and joins the batch (stage 7.0, gx_3ds.cpp drawTimed:
++    // kUnkeepVertices 16, kUnkeepIndices 96 - the rain's drops, sprites); a strip would not: left as it is
++    if (!asStrip && count <= 16 && kept <= 96) {
++        gKeptStats.vcSmall++;
++        return false;
++    }
++    const auto own = gKeptOwnOrder.find(at);
++    if (!keptOrderFree() || (own != gKeptOwnOrder.end() && own->second == keyHash)) {
++        gKeptStats.vcOrder++;
++        gKeptStats.vcOrderIndices += kept;
++        return false;
++    }
++    const long long from = nowNs();
++    std::vector<u16> made;
++    std::vector<u32> madeStarts;
++    bool ok = false;
++    u32 before = 0, after = 0;
++    try {
++        ok = re4restrip::restrip(tri, n, count, gVcacheK, gVcacheCut, made, &madeStarts);
++        if (ok) {
++            before = re4restrip::shaded(ix.data(), kept, count, gVcacheK);
++            after = re4restrip::shaded(made.data(), (u32) made.size(), count, gVcacheK);
++        }
++    } catch (const std::bad_alloc&) {  // (the C heap: the list as it was)
++        gKeptStats.vcNoRoom++;
++        ok = false;
++    }
++    gKeptStats.vcNs += (u64) (nowNs() - from);
++    if (!ok) {
++        return false;
++    }
++    if (made.size() + 2 * (size_t) after >= kept + 2 * (size_t) before) {
++        gKeptStats.vcNoGain++;
++        return false;
++    }
++    gKeptStats.vcLists++;
++    gKeptStats.vcIndices[0] += kept;
++    gKeptStats.vcIndices[1] += (u32) made.size();
++    gKeptStats.vcShaded[0] += before;
++    gKeptStats.vcShaded[1] += after;
++    ix.swap(made);
++    kept = (u32) ix.size();
++    asStrip = true;
++    if (starts) {
++        starts->swap(madeStarts);
++    }
++    return true;
++}
++
 +// A dynamic list: its vertices alike by their bytes in the list once, the indices to them.
 +bool keptBuildDynamic(Kept& k, const u8* list, u32 size, bool be, const Format& f, const DrawArrays& arrays,
 +                      u32 vertices, u32 indices, u32 draws)
@@ -5789,10 +5901,19 @@ index aaeaf967..400313b7 100644
 +    }
 +    std::vector<u16> strip;
 +    keptStrip(list, size, be, in, strip);
-+    const bool asStrip = keptAsStrip(strip, map, kept);
++    const u32 listed = kept;  // (2026-11-18) the triangles' indices: in ix, in strip once swapped
++    bool asStrip = keptAsStrip(strip, map, kept);
 +    if (asStrip) {
 +        kept = (u32) strip.size();
 +        ix.swap(strip);
++    }
++    k.reordered = false;
++    k.tris = listed / 3;
++    if (asStrip) {
++        k.reordered = keptVcache((uintptr_t) list | 1, k.keyHash, strip.data(), listed, count, ix, kept, asStrip, nullptr);
++    } else {
++        const std::vector<u16> tri(ix.begin(), ix.begin() + listed);
++        k.reordered = keptVcache((uintptr_t) list | 1, k.keyHash, tri.data(), listed, count, ix, kept, asStrip, nullptr);
 +    }
 +    // split (stage 3.8): the template's rest (all but the position and the normal) in the room, drawn from there
 +    if (gSplitFrom < 0) {
@@ -5990,10 +6111,19 @@ index aaeaf967..400313b7 100644
 +    gStripStarts = gPieceIndices > 0 ? &starts : nullptr;
 +    keptStrip(list, size, be, f.inSize, strip);
 +    gStripStarts = nullptr;
++    const u32 listed = kept;  // (2026-11-18) the triangles' indices: in ix, in strip once swapped
 +    if (keptAsStrip(strip, map, kept)) {
 +        kept = (u32) strip.size();
 +        ix.swap(strip);
 +        asStrip = true;
++    }
++    k.reordered = false;
++    k.tris = listed / 3;
++    if (asStrip) {
++        k.reordered = keptVcache((uintptr_t) list, k.keyHash, strip.data(), listed, count, ix, kept, asStrip, &starts);
++    } else {
++        const std::vector<u16> tri(ix.begin(), ix.begin() + listed);
++        k.reordered = keptVcache((uintptr_t) list, k.keyHash, tri.data(), listed, count, ix, kept, asStrip, &starts);
 +    }
 +    free(k.pieces);
 +    k.pieces = nullptr;
@@ -6024,8 +6154,20 @@ index aaeaf967..400313b7 100644
 +            }
 +        }
 +        if (pieces.size() > 1) {
++            Kept::Piece all = pieces[0];  // (2026-11-18) the whole list's box after the last piece (keptPieces)
++            all.from = 0;
++            all.count = kept;
++            for (const Kept::Piece& p : pieces) {
++                for (int c = 0; c < 3; c++) {
++                    all.lo[c] = p.lo[c] < all.lo[c] ? p.lo[c] : all.lo[c];
++                    all.hi[c] = p.hi[c] > all.hi[c] ? p.hi[c] : all.hi[c];
++                }
++            }
++            pieces.push_back(all);
 +            k.pieces = (Kept::Piece*) malloc(pieces.size() * sizeof(Kept::Piece));
++            pieces.pop_back();
 +            if (k.pieces) {
++                k.pieces[pieces.size()] = all;
 +                memcpy(k.pieces, pieces.data(), pieces.size() * sizeof(Kept::Piece));
 +                k.nPieces = (u32) pieces.size();
 +                gKeptStats.pieceLists++;
@@ -6070,6 +6212,31 @@ index aaeaf967..400313b7 100644
 +    const float* p = (const float*) &gGp.xfReg[0x20];
 +    const bool persp = gGp.xfReg[0x26] == 0;
 +    u32 runFrom = 0, runCount = 0, out = 0;
++    u32 gap = 0;  // (2026-11-18) indices outside the view since the run's last visible piece
++    {
++        // (2026-11-18) the whole list's box first (after the last piece): all of it within the view - one draw, no
++        // piece tested (with the new strips twice the lists are cut: bench7 350 -> 675 tests a frame on the GX thread)
++        const Kept::Piece& all = k.pieces[k.nPieces];
++        u32 any = 0;
++        for (int c = 0; c < 8 && !any; c++) {
++            const float x = c & 1 ? all.hi[0] : all.lo[0], y = c & 2 ? all.hi[1] : all.lo[1], z = c & 4 ? all.hi[2] : all.lo[2];
++            const float ex = m[0] * x + m[1] * y + m[2] * z + m[3];
++            const float ey = m[4] * x + m[5] * y + m[6] * z + m[7];
++            const float ez = m[8] * x + m[9] * y + m[10] * z + m[11];
++            const float cx = persp ? p[0] * ex + p[1] * ez : p[0] * ex + p[1];
++            const float cy = persp ? p[2] * ey + p[3] * ez : p[2] * ey + p[3];
++            const float cz = p[4] * ez + p[5];
++            const float cw = persp ? -ez : 1.0f;
++            any |= (cx > cw ? 1u : 0) | (cx < -cw ? 2u : 0) | (cy > cw ? 4u : 0) | (cy < -cw ? 8u : 0) |
++                   (cz > 0.0f ? 16u : 0) | (cz < -cw ? 32u : 0);
++        }
++        if (!any) {
++            gKeptStats.pieceWhole++;
++            gKeptStats.pieceRuns++;
++            gDirect->draw(&d, k.vertices, k.indices, gGp.bp, gGp.xfMem, gGp.xfReg);
++            return;
++        }
++    }
 +    auto flush = [&]() {
 +        if (runCount) {
 +            Re4GxDraw r = d;
@@ -6100,12 +6267,22 @@ index aaeaf967..400313b7 100644
 +            out++;
 +            gKeptStats.pieceOut++;
 +            gKeptStats.pieceOutIndices += pc.count;
-+            flush();
++            if (runCount) {
++                gap += pc.count;
++                if (gap > gPieceGap) {
++                    flush();
++                    gap = 0;
++                }
++            }
 +            continue;
 +        }
 +        if (!runCount) {
 +            runFrom = pc.from;
++        } else if (gap) {  // (the pieces follow one another in the strip)
++            runCount += gap;
++            gKeptStats.pieceBridged += gap;
 +        }
++        gap = 0;
 +        runCount += pc.count;
 +    }
 +    flush();
@@ -6183,7 +6360,17 @@ index aaeaf967..400313b7 100644
 +        stale = hashBytes(list, size, size) != kp->fullHash;
 +        gKeptStats.dynStale += stale;
 +    }
-+    if (kp && (stale || kp->keyHash != keyHash)) {
++    // (2026-11-18) reordered for the vertex cache and now drawn where the order matters: its own order from now on
++    bool ownOrder = false;
++    if (kp && kp->vertices && kp->reordered && kp->tris > 2 && kp->keyHash == keyHash && !keptOrderFree()) {
++        if (gKeptOwnOrder.size() >= 4096) {
++            gKeptOwnOrder.clear();
++        }
++        gKeptOwnOrder[at] = keyHash;
++        gKeptStats.vcPinned++;
++        ownOrder = true;
++    }
++    if (kp && (stale || ownOrder || kp->keyHash != keyHash)) {
 +        keptDrop(*kp);
 +        keptForget(at);
 +        kp = nullptr;
@@ -6216,10 +6403,7 @@ index aaeaf967..400313b7 100644
 +            heapShort = true;
 +            k.retry = gDirectFrames + 30;
 +            keptFailed(1, 0);
-@@ -2244,3 +4178,227 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
--        const u32 owner[4] = {rd32(p + 1, be), rd32(p + 5, be), rd32(p + 9, be), rd32(p + 13, be)};
--        if (chunk()) {
--            emit(RE4_GX_OP_OWNER, owner, 4);
++        }
 +        if (!built) {
 +            k.never = !heapShort && k.retry != gDirectFrames + 2;
 +            gKeptStats.never += k.never;
@@ -6227,6 +6411,9 @@ index aaeaf967..400313b7 100644
 +        }
 +    }
 +    k.lastFrame = gDirectFrames;
++    if (k.reordered && !keptOrderFree()) {  // (2026-11-18: one or two triangles - counted, drawn all the same)
++        gKeptStats.vcOrderDraws++;
++    }
 +    Re4GxDraw d = k.draw;
 +    d.matrices[0] = f.defaults[0] | f.defaults[1] << 8 | f.defaults[2] << 16 | (u32) f.defaults[3] << 24;
 +    d.matrices[1] = f.defaults[4] | f.defaults[5] << 8 | f.defaults[6] << 16 | (u32) f.defaults[7] << 24;
@@ -6447,18 +6634,16 @@ index aaeaf967..400313b7 100644
 +        *need = 9;
 +        if (n < 9) {
 +            return 0;
-@@ -2247,0 +4406,10 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
++        }
 +        gStats.commands++;
 +        callDisplayList(rd32(p + 1, be), rd32(p + 5, be), depth);
 +        return 9;
-+    case 0x02: {  // the port's owner tag (gx_fifo.cpp re4_gx_put_owner, patch 0137)
-+        *need = 17;
-+        if (n < 17) {
-+            return 0;
-+        }
-+        const u32 owner[4] = {rd32(p + 1, be), rd32(p + 5, be), rd32(p + 9, be), rd32(p + 13, be)};
+@@ -2245,3 +4609 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+-        if (chunk()) {
+-            emit(RE4_GX_OP_OWNER, owner, 4);
+-        }
 +        ownerCommand(owner);
-@@ -2249,0 +4418,9 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2249,0 +4612,9 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +    case 0x03:  // the port's hint (gx_fifo.cpp re4_gx_put_hint): 1 the arrays set are file data
 +        *need = 5;
 +        if (n < 5) {
@@ -6468,13 +6653,13 @@ index aaeaf967..400313b7 100644
 +        gStaticArrays = rd32(p + 1, be) == 1;
 +#endif
 +        return 5;
-@@ -2275,0 +4453,3 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2275,0 +4647,3 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +#if defined(__3DS__)
 +        if (chunk() || gDirect) {
 +#else
-@@ -2276,0 +4457 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
+@@ -2276,0 +4651 @@ size_t command(const u8* p, size_t n, size_t* need, bool be, int depth)
 +#endif
-@@ -2297,0 +4479,39 @@ size_t gNeed = 1;
+@@ -2297,0 +4673,39 @@ size_t gNeed = 1;
 +#if defined(__3DS__)
 +// The vertex window (re4_gx_fifo.h, the 3DS): the room of a FIFO draw whose head is in the stream,
 +// written by the game's inline vertex writes. Anything else that touches the stream closes it
@@ -6514,12 +6699,12 @@ index aaeaf967..400313b7 100644
 +}
 +#endif
 +
-@@ -2303,0 +4524,4 @@ void drain()
+@@ -2303,0 +4718,4 @@ void drain()
 +    RE4_PROF_SAMPLE(RE4_PROF_GX, 64);
 +#if defined(__3DS__)
 +    closeWindow();
 +#endif
-@@ -2315,0 +4540,21 @@ void drain()
+@@ -2315,0 +4734,21 @@ void drain()
 +#if defined(__3DS__)
 +        {
 +            int k = kStreamOther;
@@ -6541,7 +6726,7 @@ index aaeaf967..400313b7 100644
 +            gStreamBytes[k] += (u32) used;
 +        }
 +#endif
-@@ -2324,0 +4570,67 @@ void drain()
+@@ -2324,0 +4764,67 @@ void drain()
 +#if defined(__3DS__)
 +    openWindow();
 +#endif
@@ -6609,17 +6794,17 @@ index aaeaf967..400313b7 100644
 +{
 +    re4_gx_window = re4_gx_window_end = nullptr;  // the stream holds the whole draw
 +    drain();
-@@ -2325,0 +4638 @@ void drain()
+@@ -2325,0 +4832 @@ void drain()
 +#endif
-@@ -2328,0 +4642,3 @@ void feed(const uint8_t* bytes, size_t n)
+@@ -2328,0 +4836,3 @@ void feed(const uint8_t* bytes, size_t n)
 +#if defined(__3DS__)
 +    closeWindow();
 +#endif
-@@ -2330,0 +4647,3 @@ void feed(const uint8_t* bytes, size_t n)
+@@ -2330,0 +4841,3 @@ void feed(const uint8_t* bytes, size_t n)
 +#if defined(__3DS__)
 +    gFeeds++;
 +#endif
-@@ -2343,0 +4663,104 @@ extern "C" {
+@@ -2343,0 +4857,116 @@ extern "C" {
 +#if defined(__3DS__)
 +// (stage 41) the heads by the skinning jobs
 +int re4_gx_head_on;
@@ -6667,12 +6852,24 @@ index aaeaf967..400313b7 100644
 +            (unsigned) gKept.size(), gKeptBytes >> 10, s.hits, s.made, s.uniqueVertices, s.rawVertices, s.never, s.failed,
 +            s.failBudget, s.failHeap, s.failRoom, s.failMax >> 10, s.evicted, s.rebuilt, gDynamicKeep, s.dynHits, s.dynVertices, s.dynSplit, gSplitFrom, s.headFast, s.headDirect, s.dynMade, gSkinTemplate, s.dynChecks, s.dynFull,
 +            s.dynStale, s.stripIndices, s.listIndices);
++    re4_log("3ds: display list cache, vertex cache order (RE4_3DS_VCACHE %d, a cache of %u, parts of %u triangles): since "
++            "the last line %u lists made anew (indices %u -> %u, vertices shaded %u -> %u), %.1f ms; left as they were: "
++            "%u where the order matters (%u indices), %u no cheaper, %u without memory, %u small ones (the renderer "
++            "joins them); %u reordered lists met where "
++            "the order matters (made again in their own order); %u draws of reordered lists of one or two triangles "
++            "there",
++            gVcache, gVcacheK, gVcacheCut, s.vcLists, s.vcIndices[0], s.vcIndices[1], s.vcShaded[0], s.vcShaded[1],
++            s.vcNs / 1.0e6, s.vcOrder, s.vcOrderIndices, s.vcNoGain, s.vcNoRoom, s.vcSmall, s.vcPinned,
++            s.vcOrderDraws);
 +    re4_log("3ds: display list cache in pieces (plan 5b, %d indices a piece, from frame %u): %u lists cut since the last "
-+            "line; per frame %.1f pieces tested, %.1f outside (%.0f indices), %.1f draws of visible runs, %.1f lists wholly "
++            "line; per frame %.1f lists whole by their box, %.1f pieces tested, %.1f outside (%.0f indices; %.0f of them "
++            "drawn all the same between visible pieces, RE4_3DS_PIECEGAP %u), %.1f draws of visible runs, %.1f lists wholly "
 +            "outside", gPieceIndices, gPiecesFrom, s.pieceLists,
++            s.pieceWhole / (double) (gDirectFrames - gTimeFrom ? gDirectFrames - gTimeFrom : 1),
 +            s.pieceTests / (double) (gDirectFrames - gTimeFrom ? gDirectFrames - gTimeFrom : 1),
 +            s.pieceOut / (double) (gDirectFrames - gTimeFrom ? gDirectFrames - gTimeFrom : 1),
 +            s.pieceOutIndices / (double) (gDirectFrames - gTimeFrom ? gDirectFrames - gTimeFrom : 1),
++            s.pieceBridged / (double) (gDirectFrames - gTimeFrom ? gDirectFrames - gTimeFrom : 1), gPieceGap,
 +            s.pieceRuns / (double) (gDirectFrames - gTimeFrom ? gDirectFrames - gTimeFrom : 1),
 +            s.pieceListsOut / (double) (gDirectFrames - gTimeFrom ? gDirectFrames - gTimeFrom : 1));
 +    {  // (stage 41)
@@ -6724,11 +6921,11 @@ index aaeaf967..400313b7 100644
 +}
 +#endif
 +
-@@ -2350,0 +4774,3 @@ void re4_gx_mark(void)
+@@ -2350,0 +4980,3 @@ void re4_gx_mark(void)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2364,19 +4789,0 @@ void re4_gx_still(int on)
+@@ -2364,19 +4995,0 @@ void re4_gx_still(int on)
 -void re4_gx_movie(int on)
 -{
 -    gMovie.store(on != 0);
@@ -6748,14 +6945,14 @@ index aaeaf967..400313b7 100644
 -    return gWide.load();
 -}
 -
-@@ -2384,0 +4792,3 @@ void re4_gx_host_order_list(const void* list, unsigned int size)
+@@ -2384,0 +4998,3 @@ void re4_gx_host_order_list(const void* list, unsigned int size)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2419 +4829 @@ void re4_core_gx_release(const Re4GxChunk* chunk)
+@@ -2419 +5035 @@ void re4_core_gx_release(const Re4GxChunk* chunk)
 -void re4_gx_vi_next(const void* fb)
 +static void viNext(uint32_t fb, uint32_t)
-@@ -2422 +4832,12 @@ void re4_gx_vi_next(const void* fb)
+@@ -2422 +5038,12 @@ void re4_gx_vi_next(const void* fb)
 -    gViNext = (u32) (uintptr_t) fb & 0x03FFFFE0;  // as BP 0x4B holds a copy destination
 +    gViNext = fb & 0x03FFFFE0;  // as BP 0x4B holds a copy destination
 +}
@@ -6769,10 +6966,10 @@ index aaeaf967..400313b7 100644
 +    }
 +#endif
 +    viNext((uint32_t) (uintptr_t) fb, 0);
-@@ -2427 +4848 @@ void re4_gx_vi_next(const void* fb)
+@@ -2427 +5054 @@ void re4_gx_vi_next(const void* fb)
 -void re4_gx_vi_black(int black)
 +static void viBlack(uint32_t black, uint32_t)
-@@ -2432,0 +4854,11 @@ void re4_gx_vi_black(int black)
+@@ -2432,0 +5060,11 @@ void re4_gx_vi_black(int black)
 +void re4_gx_vi_black(int black)
 +{
 +#if defined(__3DS__)
@@ -6784,10 +6981,10 @@ index aaeaf967..400313b7 100644
 +    viBlack(black != 0, 0);
 +}
 +
-@@ -2435 +4867 @@ void re4_gx_vi_black(int black)
+@@ -2435 +5073 @@ void re4_gx_vi_black(int black)
 -void re4_gx_vi_flush(void)
 +static void viFlush(uint32_t, uint32_t)
-@@ -2441,0 +4874,11 @@ void re4_gx_vi_flush(void)
+@@ -2441,0 +5080,11 @@ void re4_gx_vi_flush(void)
 +void re4_gx_vi_flush(void)
 +{
 +#if defined(__3DS__)
@@ -6799,27 +6996,27 @@ index aaeaf967..400313b7 100644
 +    viFlush(0, 0);
 +}
 +
-@@ -2458,0 +4902,3 @@ void re4_gx_wait_jobs(void)
+@@ -2458,0 +5108,3 @@ void re4_gx_wait_jobs(void)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2466,0 +4913,3 @@ int re4_gx_threads(int n)
+@@ -2466,0 +5119,3 @@ int re4_gx_threads(int n)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2483,0 +4933,3 @@ void re4_gx_stats(unsigned out[11])
+@@ -2483,0 +5139,3 @@ void re4_gx_stats(unsigned out[11])
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2495,0 +4948,3 @@ void re4_gx_stats2(unsigned out[9])
+@@ -2495,0 +5154,3 @@ void re4_gx_stats2(unsigned out[9])
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2504,0 +4960,3 @@ unsigned re4_gx_bp(unsigned reg)
+@@ -2504,0 +5166,3 @@ unsigned re4_gx_bp(unsigned reg)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
-@@ -2510,0 +4969,3 @@ unsigned re4_gx_xf(unsigned address)
+@@ -2510,0 +5175,3 @@ unsigned re4_gx_xf(unsigned address)
 +#if defined(__3DS__)
 +    re4_gxq_sync();
 +#endif
