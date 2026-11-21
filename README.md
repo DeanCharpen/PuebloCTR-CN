@@ -288,7 +288,7 @@ This is a beta. Known so far:
 - **Effects that read the picture back are missing**: some blur, depth of field and heat haze, part of the shadows.
   Bump mapping on some clothes is missing.
 - **Loading between areas** shows a still picture for up to about 2 seconds.
-- **The HOME Menu** could crash when opened during play. The cause is found and fixed in beta5, and we hope it is gone
+- **The HOME Menu** could crash when opened during play. The cause is found and fixed in beta5, and I hope it is gone
   completely; please report it if it still happens. If you copy files to the SD card over the network (ftpd), restart the
   console before you play: otherwise the HOME Menu can still crash. Save before you open it.
 - **Not yet checked on the console**: the rest of the game after roughly its first third (the playthrough is in progress -
@@ -361,4 +361,6 @@ tools/fetch_fonts.sh             the Noto Serif JP faces those two draw with (on
 
 PuebloCTR's own work ([overlay/](overlay), [patches/](patches), [tools/](tools), [docker/](docker)) is under the MIT licence ([LICENSE](LICENSE), with its scope).
 CubeEvil4 has its own licence; the game's code it reconstructs belongs to its owners. Third-party parts:
-[THIRD-PARTY.md](THIRD-
+[THIRD-PARTY.md](THIRD-PARTY.md).
+
+This project is not affiliated with or endorsed by Nintendo, Capcom or CRI Middleware.
