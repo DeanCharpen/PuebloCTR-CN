@@ -1,0 +1,322 @@
+# Port patch 0339 (2026-11-21; v2: one quad record, RE4_ESP_QUADS): runs of plain effect sprites with one texture, pattern, blend and TEV/channel setup drawn as one GXBegin (quads through m_Mat on the CPU, the material colour per vertex); the same pictures. RE4_ESP_BATCH=0: as before.
+diff -ruN a/src/game/esp_sub.cpp b/src/game/esp_sub.cpp
+--- a/src/game/esp_sub.cpp	2026-11-21 10:35:46.432142420 +0900
++++ b/src/game/esp_sub.cpp	2026-11-21 10:35:46.498973872 +0900
+@@ -108,6 +108,234 @@
+         }                                                                                         \
+     }
+ 
++/* port (patch 0339, 2026-11-21): runs of plain sprites with one texture, pattern, blend and TEV/channel setup drawn
++   as one GXBegin - each quad through its m_Mat on the CPU, ChannelSet's colour per vertex (see the patch's head). */
++int re4_esp_batch = -1;
++int re4_esp_quads = -1;  // (v2) RE4_ESP_QUADS=1 (the default): the batch as one quad record (re4_gx_put_quads), 0: a GXBegin
++extern "C" void re4_gx_put_quads(const unsigned int* words); /* port: runtime/gx_fifo.cpp (patch 0339 v2) */
++extern "C" void __GXSetDirtyState(void); /* the SDK (GXGeometry.c): what GXBegin sends first */
++#define ESP_BATCH_MAX 128
++static struct {
++    int n;
++    s32 tex, ptn;
++    u8 blend[4];
++    u32 chanKey;
++    u32 flags;       // m_Tool_flg & 0xB08000: the alpha update, Z and alpha compare set around the draw
++    u8 quiet;        // ChannelSet without GX writes (a sprite joining the batch)
++    GXColor col;     // ChannelSet's colour of the sprite now
++    Mtx lastMat;
++    GXColor lastCol;
++    f32 pos[ESP_BATCH_MAX * 4][3];
++    GXColor vcol[ESP_BATCH_MAX];
++} s_espBatch;
++
++void EspCommonTrans(cEsp* esp);
++static int espBatchFlags(cEsp* esp)
++{
++    if (re4_esp_batch < 0) {
++        const char* e = getenv("RE4_ESP_BATCH");
++        re4_esp_batch = e ? atoi(e) : 1;
++    }
++    return re4_esp_batch > 0 && re4_esp_state >= 2 && g_OtCurFunc == (void (*)(void*)) EspCommonTrans &&
++           !ESP_PARTS_SCREEN(esp) && esp->m_Shimmer_type == 0 &&
++           !(esp->m_Tool_flg & (0x40 | 0x2000 | 0x4000)) && !(esp->m_Flg & 0x10);
++}
++
++// RE4_ESP_BATCH=2: why sprites did not join, logged every 300 frames (diagnostic)
++extern "C" void re4_log(const char* fmt, ...);
++static u32 s_espWhy[12], s_espWhyFrame, s_espWhyTool;
++
++static void espBatchWhy(cEsp* esp, int join)
++{
++    const char* const names[12] = {"joined", "not direct", "screen", "tool flags", "Esp1b", "opened", "run broken",
++                                   "texture", "pattern", "blend", "channel / flags", "shimmer"};
++    if (s_espWhyFrame != pG->Frame_cnt && pG->Frame_cnt % 300 == 0) {
++        re4_log("esp batch (frame %u): %s %u, %s %u, %s %u, %s %u (0x%x), %s %u, %s %u, %s %u, %s %u, %s %u, %s %u, %s %u",
++                (unsigned) pG->Frame_cnt, names[0], s_espWhy[0], names[1], s_espWhy[1], names[2], s_espWhy[2],
++                names[3], s_espWhy[3], (unsigned) s_espWhyTool, names[4], s_espWhy[4], names[5], s_espWhy[5],
++                names[6], s_espWhy[6], names[7], s_espWhy[7], names[8], s_espWhy[8], names[9], s_espWhy[9],
++                names[10], s_espWhy[10], names[11], s_espWhy[11]);
++        memset(s_espWhy, 0, sizeof(s_espWhy));
++        s_espWhyTool = 0;
++    }
++    s_espWhyFrame = pG->Frame_cnt;
++    const u32 bad = esp->m_Tool_flg & (0x40 | 0x2000 | 0x4000);
++    int why;
++    if (join) {
++        why = 0;
++    } else if (g_OtCurFunc != (void (*)(void*)) EspCommonTrans) {
++        why = 1;
++    } else if (ESP_PARTS_SCREEN(esp)) {
++        why = 2;
++    } else if (bad) {
++        why = 3;
++        s_espWhyTool |= bad;
++    } else if (esp->m_Flg & 0x10) {
++        why = 4;
++    } else if (esp->m_Shimmer_type != 0) {
++        why = 11;
++    } else if (s_espBatch.n == 0) {
++        why = 5;
++    } else if (!s_espRun.ok) {
++        why = 6;
++    } else if (s_espBatch.tex != (s32) esp->m_Tex_id) {
++        why = 7;
++    } else if (s_espBatch.ptn != (s32) esp->m_Ptn_no) {
++        why = 8;
++    } else if (s_espBatch.chanKey != (esp->m_Tool_flg & 0x20080) || s_espBatch.flags != (esp->m_Tool_flg & 0xB08000)) {
++        why = 10;
++    } else {
++        why = 9;
++    }
++    s_espWhy[why]++;
++}
++
++static int espBatchJoin(cEsp* esp)
++{
++    return s_espBatch.n > 0 && s_espRun.ok && espBatchFlags(esp) && s_espBatch.tex == (s32) esp->m_Tex_id &&
++           s_espBatch.ptn == (s32) esp->m_Ptn_no && s_espBatch.blend[0] == esp->m_Blend_mode &&
++           s_espBatch.blend[1] == esp->m_Src_factor && s_espBatch.blend[2] == esp->m_Dst_factor &&
++           s_espBatch.blend[3] == esp->m_Logic_op && s_espBatch.chanKey == (esp->m_Tool_flg & 0x20080) &&
++           s_espBatch.flags == (esp->m_Tool_flg & 0xB08000);
++}
++
++void re4EspBatchFlush()
++{
++    const int n = s_espBatch.n;
++    if (n == 0) {
++        return;
++    }
++    s_espBatch.n = 0;
++    const u8* dl = g_EspCommonDisplayList + 4;  // after the NOP, GXBegin and its count: 4 x (pos s8 3, nrm s8 3, tex s8 2)
++    Mtx id;
++    int i;
++    int v;
++    if (re4_esp_quads < 0) {
++        const char* e = getenv("RE4_ESP_QUADS");
++        re4_esp_quads = e ? atoi(e) : 1;
++    }
++    GXSetChanCtrl(4, 0, 0, 1, 0, 0, 2);
++    {  // (v2 too: the XF's input spec - 0x1008, a colour per vertex - follows the description)
++    GXClearVtxDesc();
++    GXSetVtxDesc(9, 1);
++    GXSetVtxDesc(0xB, 1);
++    GXSetVtxDesc(0xD, 1);
++    GXSetVtxAttrFmt(0, 9, 1, 4, 0);
++    GXSetVtxAttrFmt(0, 0xB, 1, 5, 0);
++    GXSetVtxAttrFmt(0, 0xD, 1, 1, 0);
++    }
++    PSMTXIdentity(id);
++    GXLoadPosMtxImm(id, 0);
++    GXSetCurrentMtx(0);  // (a batched sprite left out its own GXSetCurrentMtx)
++    {
++        const u32 f = s_espBatch.flags;
++        u32 sysFlags = pG->Status_flg[1];
++        if ((!(sysFlags & 0x80) && (f & 0x8000)) || (StaFlagChk(pG, STA_ALPHA_DRAW2) && (f & 0x800000))) {
++            GXSetAlphaUpdate(1);
++        }
++        if (f & 0x200000) {
++            GXSetZMode(1, 3, 1);
++            GXSetDstAlpha(1, 0);
++        }
++        if (f & 0x100000) {
++            GXSetAlphaCompare(4, 0x80, 1, 4, 0x80);
++        }
++    }
++    if (re4_esp_quads > 0) {  // (v2) one record: n, the 4 corners' texture coordinates, per quad 4 corners and a colour
++        static unsigned int qw[9 + 13 * ESP_BATCH_MAX];
++        qw[0] = (unsigned int) n;
++        for (v = 0; v < 4; v++) {
++            const f32 s = (f32) (s8) dl[v * 8 + 6], t = (f32) (s8) dl[v * 8 + 7];
++            memcpy(&qw[1 + 2 * v], &s, 4);
++            memcpy(&qw[2 + 2 * v], &t, 4);
++        }
++        for (i = 0; i < n; i++) {
++            const GXColor c = s_espBatch.vcol[i];
++            memcpy(&qw[9 + 13 * i], s_espBatch.pos[i * 4], 48);
++            qw[9 + 13 * i + 12] = (unsigned int) c.r << 24 | (unsigned int) c.g << 16 | (unsigned int) c.b << 8 | c.a;
++        }
++        __GXSetDirtyState();  // (the state the GX library holds back until a GXBegin: gen mode, TEV, SU)
++        re4_gx_put_quads(qw);
++    } else {
++    GXBegin(0x80, 0, (u16) (n * 4));
++    for (i = 0; i < n; i++) {
++        const GXColor c = s_espBatch.vcol[i];
++        for (v = 0; v < 4; v++) {
++            const f32* p = s_espBatch.pos[i * 4 + v];
++            GXPosition3f32(p[0], p[1], p[2]);
++            GXColor4u8(c.r, c.g, c.b, c.a);
++            re4_gx_put_s8((s8) dl[v * 8 + 6]);
++            re4_gx_put_s8((s8) dl[v * 8 + 7]);
++        }
++    }
++    }
++    if (s_espBatch.flags & 0x200000) {
++        GXSetZMode(1, 3, 0);
++        GXSetDstAlpha(0, 0);
++    }
++    if (s_espBatch.flags & 0x100000) {
++        GXSetAlphaCompare(4, 1, 1, 4, 1);
++    }
++    if (s_espBatch.flags & 0x808000) {
++        GXSetAlphaUpdate(0);
++    }
++    // the state the last sprite left
++    GXSetChanCtrl(4, 0, 0, 0, 0, 0, 2);
++    GXSetChanMatColor(4, s_espBatch.lastCol);
++    s_espRun.col = s_espBatch.lastCol;
++    s_espRun.haveCol = 1;
++    {
++    GXClearVtxDesc();
++    GXSetVtxDesc(9, 1);
++    GXSetVtxDesc(0xA, 1);
++    GXSetVtxDesc(0xD, 1);
++    GXSetVtxAttrFmt(0, 9, 1, 1, 0);
++    GXSetVtxAttrFmt(0, 0xA, 0, 1, 0);
++    GXSetVtxAttrFmt(0, 0xD, 1, 1, 0);
++    }
++    GXLoadPosMtxImm(s_espBatch.lastMat, 0);
++    GXSetCurrentMtx(0);
++    s_espRun.haveMtx = 1;
++}
++
++// ExecOt, before each entry: the batch drawn unless the entry is a plain sprite that may join it
++void re4EspBatchBefore(void (*func)(void*), u16 kind)
++{
++    if (s_espBatch.n > 0 && !(kind == 8 && func == (void (*)(void*)) EspCommonTrans)) {
++        re4EspBatchFlush();
++    }
++}
++
++static void espBatchAdd(cEsp* esp)
++{
++    const u8* dl = g_EspCommonDisplayList + 4;
++    int v;
++    if (s_espBatch.n >= ESP_BATCH_MAX) {
++        re4EspBatchFlush();  // (the state stays: the next batch goes on with it)
++    }
++    if (s_espBatch.n == 0) {
++        s_espBatch.tex = (s32) esp->m_Tex_id;
++        s_espBatch.ptn = (s32) esp->m_Ptn_no;
++        s_espBatch.blend[0] = esp->m_Blend_mode;
++        s_espBatch.blend[1] = esp->m_Src_factor;
++        s_espBatch.blend[2] = esp->m_Dst_factor;
++        s_espBatch.blend[3] = esp->m_Logic_op;
++        s_espBatch.chanKey = esp->m_Tool_flg & 0x20080;
++        s_espBatch.flags = esp->m_Tool_flg & 0xB08000;
++    }
++    const int i = s_espBatch.n++;
++    for (v = 0; v < 4; v++) {
++        const f32 x = (f32) (s8) dl[v * 8], y = (f32) (s8) dl[v * 8 + 1], z = (f32) (s8) dl[v * 8 + 2];
++        f32* o = s_espBatch.pos[i * 4 + v];
++        o[0] = esp->m_Mat[0][0] * x + esp->m_Mat[0][1] * y + esp->m_Mat[0][2] * z + esp->m_Mat[0][3];
++        o[1] = esp->m_Mat[1][0] * x + esp->m_Mat[1][1] * y + esp->m_Mat[1][2] * z + esp->m_Mat[1][3];
++        o[2] = esp->m_Mat[2][0] * x + esp->m_Mat[2][1] * y + esp->m_Mat[2][2] * z + esp->m_Mat[2][3];
++    }
++    s_espBatch.vcol[i] = s_espBatch.col;
++    s_espBatch.lastCol = s_espBatch.col;
++    PSMTXCopy(esp->m_Mat, s_espBatch.lastMat);
++}
++
+ // Default Trans (draw) entry shared by the sprite effects: dispatches to the shimmer / nega variants,
+ // otherwise draws the sprite quad (g_EspCommonDisplayList) with the effect's texture, an optional
+ // mask texture in TEV stage 1, and the colour from ChannelSet.
+@@ -118,6 +346,7 @@
+ {
+     EspCommonTransBody(esp);
+     s_espRun.ok = 0;
++    s_espBatch.quiet = 0;  // port (patch 0339)
+ }
+ 
+ static void EspCommonTransBody(cEsp* esp)
+@@ -141,6 +370,14 @@
+         return;
+     }
+     espRunEnter();  // port (3.6)
++    const int batchJoin = espBatchJoin(esp);  // port (patch 0339)
++    if (re4_esp_batch == 2) {
++        espBatchWhy(esp, batchJoin);
++    }
++    if (!batchJoin) {
++        re4EspBatchFlush();
++    }
++    s_espBatch.quiet = (u8) batchJoin;
+     if (!s_espRun.ok || !s_espRun.haveBlend || s_espRun.blend[0] != esp->m_Blend_mode ||
+         s_espRun.blend[1] != esp->m_Src_factor || s_espRun.blend[2] != esp->m_Dst_factor ||
+         s_espRun.blend[3] != esp->m_Logic_op) {
+@@ -324,6 +561,10 @@
+         PSMTXConcat(esp->parent->mat, esp->m_Mat, esp->m_Mat);
+         PSMTXConcat(pG->Camera.v_mat, esp->m_Mat, esp->m_Mat);
+     }
++    if (espBatchFlags(esp)) {  // port (patch 0339): into the batch (opened here, or joined)
++        espBatchAdd(esp);
++        return;
++    }
+     if (re4_esp_state < 2 || (esp->m_Tool_flg & 0x40)) {  // port (3.6): the normal matrix only with lighting
+         PSMTXInverse(esp->m_Mat, inv);
+         PSMTXTranspose(inv, inv);
+@@ -1049,7 +1290,7 @@
+         GXSetTevColorOp(0, 0, 0, 2, 1, 0);
+         commonEspLightSet(sys->EspLightEnv.LightData, sys->EspLightEnv.Light_num);
+         espRunForget();
+-    } else if (!s_espRun.ok || !s_espRun.haveChan || s_espRun.chanKey != (m_Tool_flg & 0x20080)) {
++    } else if (!s_espBatch.quiet && (!s_espRun.ok || !s_espRun.haveChan || s_espRun.chanKey != (m_Tool_flg & 0x20080))) {
+         GXSetTevOp(0, 0);
+         if (m_Tool_flg & 0x80) {
+             GXSetTevColorOp(0, 0, 0, 2, 1, 0);
+@@ -1110,8 +1351,9 @@
+             }
+         }
+     }
+-    if (!s_espRun.ok || !s_espRun.haveCol || s_espRun.col.r != col.r || s_espRun.col.g != col.g ||
+-        s_espRun.col.b != col.b || s_espRun.col.a != col.a) {  // port (3.6)
++    s_espBatch.col = col;  // port (patch 0339)
++    if (!s_espBatch.quiet && (!s_espRun.ok || !s_espRun.haveCol || s_espRun.col.r != col.r || s_espRun.col.g != col.g ||
++        s_espRun.col.b != col.b || s_espRun.col.a != col.a)) {  // port (3.6)
+         GXSetChanMatColor(4, col);
+         s_espRun.col = col;
+         s_espRun.haveCol = 1;
+diff -ruN a/src/game/trans_ot.cpp b/src/game/trans_ot.cpp
+--- a/src/game/trans_ot.cpp	2026-11-21 10:35:46.448638062 +0900
++++ b/src/game/trans_ot.cpp	2026-11-21 10:35:46.499776756 +0900
+@@ -277,6 +277,8 @@
+ // (g_NowExecOtType / prev_kind tell the callbacks their context); alpha compare reset afterwards.
+ // Returns the number of entries drawn.
+ extern "C" void re4_gx_owner(void* data, void* func, int table); /* port: runtime/gx_owner.cpp */
++void re4EspBatchBefore(void (*func)(void*), u16 kind); /* port (patch 0339): esp_sub.cpp */
++void re4EspBatchFlush(); /* port (patch 0339) */
+ 
+ int ExecOt(int type)
+ {
+@@ -291,6 +293,7 @@
+         for (; p; p = p->next) {
+             if (p->data) {
+                 count++;
++                re4EspBatchBefore(p->func, p->kind); /* port (patch 0339): a sprite batch drawn first */
+                 re4_gx_owner(p->data, (void*) p->func, type); /* port: the entry's object (patch 0137) */
+                 g_OtSerial++;  // port (3.6)
+                 g_OtCurFunc = p->func;
+@@ -299,6 +302,7 @@
+                 w->prev_kind = p->kind;
+             }
+         }
++        re4EspBatchFlush(); /* port (patch 0339) */
+         re4_gx_owner(0, 0, type); /* port: no object after the table */
+     }
+     GXSetAlphaCompare(7, 0, 1, 7, 0);

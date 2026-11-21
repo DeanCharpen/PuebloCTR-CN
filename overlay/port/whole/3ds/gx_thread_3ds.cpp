@@ -76,7 +76,7 @@ void* re4_3ds_job_tls;     // the jobs' worker (profile_3ds.cpp: the sampler's t
 
 namespace {
 
-enum Kind : u32 { kBytes, kBp, kCp, kXf, kCall, kOwner, kHint, kFn, kWrap };
+enum Kind : u32 { kBytes, kBp, kCp, kXf, kCall, kOwner, kHint, kFn, kWrap, kQuads };
 
 const u32 kRingBytes = 1u << 20;
 const u32 kMask = kRingBytes - 1;
@@ -354,6 +354,21 @@ void apply(u32 kind, const u32* p, u32 bytes)
         break;
     case kFn:
         ((void (*)(uint32_t, uint32_t)) p[0])(p[1], p[2]);
+        break;
+    case kQuads:  // (patch 0339 v2)
+        if (re4gx::directIdle()) {
+            re4gx::directQuads(p);
+        } else {
+            const u32 n = 9 + 13 * p[0];
+            static u8 b[1 + 4 * (9 + 13 * 128)];
+            u32 k = 0;
+            b[k++] = 0x04;
+            for (u32 i = 0; i < n && k + 4 <= sizeof(b); i++) {
+                const u32 w = p[i];
+                b[k++] = (u8) (w >> 24), b[k++] = (u8) (w >> 16), b[k++] = (u8) (w >> 8), b[k++] = (u8) w;
+            }
+            re4gx::feed(b, k);
+        }
         break;
     }
 }
@@ -753,6 +768,16 @@ void re4_gxq_hint(uint32_t hint)
     u32* p = record(kHint, 4);
     p[1] = hint;
     written(8);
+}
+
+// (patch 0339 v2) A batch of sprite quads (re4_gx_put_quads): work for the GX thread at once
+void re4_gxq_quads(const uint32_t* words)
+{
+    const u32 bytes = 4 * (9 + 13 * words[0]);
+    u32* p = record(kQuads, bytes);
+    memcpy(p + 1, words, bytes);
+    written(4 + bytes);
+    publish();
 }
 
 void re4_gxq_fn(void (*fn)(uint32_t, uint32_t), uint32_t a, uint32_t b)

@@ -49,6 +49,13 @@ LINUX_BUILD = "whole-armhf-O2-low-static"
 MAIN_TARGETS = ["re4_main_obj", "re4_gamehooks_obj", "re4_glue_obj", "re4_cri_obj", "re4_card_obj"]
 PLATFORM_TARGETS = ["re4_platform_obj", "re4_formats_obj", "re4_sdk_obj", "re4_reuse_obj"]
 GAME_NEW = ["_Znwj", "_Znaj", "_ZdlPv", "_ZdaPv"]
+# PGO, the build by profile (2026-11-21): pgo/re4.profdata of the repository (how often each function of the game ran
+# in replays on Linux; pgo/README.md), applied to these groups' files: mod (the game's modules), main (the game's main
+# part); also possible: platform (runtime, SDK), 3ds. PUEBLO_PGO=off: without; PUEBLO_PGO=FILE: another profile.
+_PGO_DEFAULT = Path(__file__).resolve().parents[1] / "pgo" / "re4.profdata"
+PGO = os.environ.get("PUEBLO_PGO", str(_PGO_DEFAULT) if _PGO_DEFAULT.is_file() else "")
+PGO = "" if PGO == "off" else PGO
+PGO_GROUPS = os.environ.get("PUEBLO_PGO_GROUPS", "mod,main").split(",")
 
 TREE = OUT = LBUILD = GEN = None
 RELEASE = False
@@ -239,6 +246,8 @@ def main():
         c = command(entry, o)
         if RELEASE and group == "3ds":
             c = c[:1] + ["-DRE4_3DS_RELEASE=1"] + c[1:]
+        if PGO and group.split(":")[0] in PGO_GROUPS:
+            c = c[:1] + ["-fprofile-instr-use=" + PGO] + c[1:]
         jobs_list.append((c, o))
         groups.setdefault(group, []).append(o)
 
@@ -259,6 +268,7 @@ def main():
     version(a.version)
     for src in sorted((TREE / "port/whole/3ds").glob("*.cpp")):
         add("3ds", "re4_3ds", flags_platform, str(TREE / "port/whole/3ds" / src.name))
+    print(f"PGO: {PGO} ({','.join(PGO_GROUPS)})" if PGO else "PGO: off")
     compile_all(jobs_list, a.jobs)
 
     main_o = OUT / "libre4_main.o"

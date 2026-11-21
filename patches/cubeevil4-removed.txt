@@ -21,7 +21,6 @@ port/whole/patches/0205-player-field-of-view.patch
 port/whole/patches/0206-tmp-placeholder-model.patch
 port/whole/patches/0208-benchmark-view-and-still-enemies.patch
 port/whole/patches/0211-ganado-rocket-model.patch
-port/whole/patches/0212-retail-jp-gore.patch
 port/whole/patches/0213-glow-light-covered.patch
 port/whole/patches/0214-native-aspect.patch
 port/whole/patches/0215-life-gauge-corner.patch

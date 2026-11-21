@@ -1,0 +1,24 @@
+# The model table (13: enemies, Leon, Ashley): a model whose sphere is behind the room in an older picture's depth is
+# left out like one outside the view - re4_occ_sphere (runtime/part_cull.cpp; the 3DS's in port/whole/3ds/gx_3ds.cpp,
+# elsewhere 0). ModelTrans then neither skins it nor lights it. The same lines.
+diff -ruN a/src/game/trans_ot.cpp b/src/game/trans_ot.cpp
+--- a/src/game/trans_ot.cpp	2026-11-20 13:13:53.195608745 +0900
++++ b/src/game/trans_ot.cpp	2026-11-20 13:13:53.350570843 +0900
+@@ -188,7 +188,7 @@
+ }
+ 
+ // The same for the model table (13), with buckets of 100 depth units (0x80 buckets).
+-int AddOtModelPosRadius(void* data, void (*func)(void*), Vec* pos, f32 radius, u16 kind, f32 zlimit)
++extern "C" int re4_occ_sphere(const Vec* pos, f32 radius, const f32 (*view)[4]); int AddOtModelPosRadius(void* data, void (*func)(void*), Vec* pos, f32 radius, u16 kind, f32 zlimit)
+ {
+     OtWork* w = otWork(13);
+     CAMERA* cam;
+@@ -210,7 +210,7 @@
+     h = CameraViewFrustumPtr(cam);
+     sph.pos = *pos;
+     sph.radius = radius;
+-    if (!collision_sphere_hexahedron(&sph, h)) {
++    if (!collision_sphere_hexahedron(&sph, h) || re4_occ_sphere(pos, radius, cam->v_mat)) {  /* port: or behind the room (0338) */
+         return 0xFFFF;
+     }
+     CameraGetLookVecInverse(cam, &look);

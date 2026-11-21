@@ -296,7 +296,7 @@ void frame(SDL_Window* window)
     }
     const bool busy = gBusy;
     ImGui::TextUnformatted("PuebloCTR - prepares your own GameCube discs of the game for the New Nintendo 3DS.");
-    ImGui::TextDisabled("European (G4BP08) or US (G4BE08) release, both discs. Nothing is written to the SD card.");
+    ImGui::TextDisabled("European (G4BP08), US (G4BE08) or Japanese (G4BJ08) release, both discs. Nothing is written to the SD card.");
     ImGui::Separator();
     ImGui::BeginDisabled(busy);
     if (pathRow("Disc 1 image", &gChoice.disc1, "##disc1")) {

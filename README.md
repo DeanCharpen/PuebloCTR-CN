@@ -13,10 +13,10 @@ the hardware H.264 decoder, a second-screen HUD with a map, gyro aiming, and a s
 **Beta.** Playable; tested on the console through roughly the first third of the game, and a full playthrough is
 still in progress. Both
 the European and the US discs are checked from a clean install (PuebloPrep, first start, the movies, saving and
-loading). Speed is about 25-30 frames per second, lower in the heaviest scenes.
+loading); the Japanese discs are new in beta5 (checked through the village, saving and loading). Speed is about 25-30 frames per second, lower in the heaviest scenes.
 
 **No game data is included**, and this is a non-commercial fan project. You need your own copy of the game: both
-GameCube discs, game ID **G4BP08** (Europe) or **G4BE08** (USA). PuebloPrep, a small program for your computer, makes
+GameCube discs, game ID **G4BP08** (Europe), **G4BE08** (USA) or **G4BJ08** (Japan, *biohazard 4*). PuebloPrep, a small program for your computer, makes
 everything the port needs from images of your discs.
 
 ## Features
@@ -30,14 +30,15 @@ everything the port needs from images of your discs.
     treasures and blue medallions still to find; separate floors; **+ / -** to zoom, a button to jump back to you, and
     drag it with a finger to look around.
 - **A settings screen** before you play (bottom screen): cheats one by one (infinite health, infinite ammo, one-hit
-  kills, automatic button prompts, +1,000,000 pesetas), the gyro, the Circle Pad's sensitivity, the picture's fit to
-  the screen (with or without black bars) and a frame counter.
-- **The original movies** play through the console's hardware H.264 decoder, with sound; the European subtitles show
-  as on the GameCube.
+  kills, automatic button prompts, +1,000,000 pesetas), the gyro, the Circle Pad's sensitivity and dead zone, your
+  own button mapping, the picture's fit to the screen (with or without black bars) and a frame counter.
+- **The original movies** play through the console's hardware H.264 decoder, with sound; the European and the Japanese
+  subtitles show as on the GameCube.
 - **Made for the New 3DS hardware**: a renderer on its PICA200 GPU, sound on its DSP, the game, the renderer and the
   animation work on separate CPU cores at 804 MHz, a texture pack prepared for the 3DS GPU for smoother loading.
-- **European and US discs**; the European ones in five languages (English, French, German, Spanish, Italian - taken
-  from the console's system language), and the bottom screen follows the game's language.
+- **European, US and Japanese discs**; the European ones in five languages (English, French, German, Spanish, Italian -
+  taken from the console's system language), the Japanese ones in Japanese, with the gore of the US release; the bottom
+  screen follows the game's language.
 - **Your saves**: bring GameCube saves from Dolphin or a memory card (`.gci` / `.gcs`) with PuebloPrep.
 - **Easy setup**: PuebloPrep (Windows, macOS, Linux) makes everything from your own disc images - ISO, GCM or Dolphin's
   RVZ - in one go; install as a CIA (HOME Menu icon and banner) or a `.3dsx`.
@@ -75,8 +76,9 @@ PuebloPrep reads disc images in the **ISO / GCM** (a plain 1:1 copy, about 1.4 G
 compressed format) form. Make them from your own discs, for example with
 [CleanRip](https://github.com/emukidid/cleanrip) on a Wii, or use the copies you already play in Dolphin.
 
-You need **both discs of the same edition**: disc 1 and disc 2 of the European release (G4BP08) or both of the US
-release (G4BE08). Other editions (the Japanese one, later re-releases for other systems) do not work.
+You need **both discs of the same edition**: disc 1 and disc 2 of the European release (G4BP08), both of the US
+release (G4BE08) or both of the Japanese one (G4BJ08, *biohazard 4*). Other editions (later re-releases for other
+systems) do not work.
 
 ## Step 2: ffmpeg (for the movies)
 
@@ -184,7 +186,8 @@ under [Troubleshooting](#troubleshooting).
 
 **The language** of the European discs follows the console's system language (German, French, Spanish or Italian;
 any other language gives English). To play in another one, change the system language in System Settings before
-starting. The US discs are in English.
+starting. The US discs are in English, the Japanese ones in Japanese. The Japanese discs play with the gore of the
+US release (the original Japanese release cut it).
 
 **The settings screen** is on the bottom screen while the game is at its title. It has three tabs - CHEATS,
 CONTROLS and SCREEN; tap a tab to open it and a row to change it:
@@ -196,6 +199,11 @@ CONTROLS and SCREEN; tap a tab to open it and a row to change it:
   - **Circle Pad sensitivity** (1x by default): how far the Circle Pad has to be pushed. The game was made for the
     GameCube's long stick and wants about half of the pad's way before the character moves; if you have to push the
     pad almost to its edge, raise it (1.25x, 1.5x, 2x). Higher values also make aiming with the pad quicker;
+  - **Circle Pad dead zone** (off by default, up to 50 %): how far the pad can move before it counts - raise it if the
+    aim or Leon creeps on its own while you don't touch the pad;
+  - **Button mapping**: any game action on any button or a combination of two (also the Circle Pad's and the C-Stick's
+    directions); **Quick turn** puts the 180-degree turn on one button. Tap an action, then press the button(s);
+    SELECT clears it; **Reset to defaults** brings back the table below;
 - **SCREEN**:
   - **Picture**: **Fit** (by default) shows the whole picture with black bars at the sides, as the game made it;
     **Stretch** fills the screen by widening the picture a little; **Zoom** fills it keeping the shape, cutting a
@@ -205,7 +213,7 @@ CONTROLS and SCREEN; tap a tab to open it and a row to change it:
 The choices apply when a game starts or loads, and are kept on the SD card (`/3ds/pueblo/settings.bin`). The version
 of your build is in the top right corner of this screen.
 
-**Controls** (as the GameCube controller):
+**Controls** (by default, as the GameCube controller; change them under CONTROLS -> Button mapping):
 
 | 3DS | GameCube |
 |---|---|
@@ -228,7 +236,7 @@ SD card right after the game saves.
 ## Saves
 
 - The memory card is one file: `/3ds/pueblo/saves/memcard.bin` (made, empty, on the first start). The CIA and the
-  `.3dsx` share it, and both editions use the same file.
+  `.3dsx` share it, and all editions use the same file.
 - To bring saves from Dolphin or a real memory card: export them as `.gci` / `.gcs` and add them in PuebloPrep
   (step 3, item 7). To take saves out of the port: `puebloprep-cli --help` shows how to export the card's saves as
   `.gci`.
@@ -252,7 +260,7 @@ SD card right after the game saves.
 | Not enough memory | Start the Homebrew Launcher through a game (title takeover), or install the CIA. |
 | Game data not found | `/3ds/pueblo/data/disc0` is missing: copy the `3ds` folder from PuebloPrep (step 4). |
 | Game data incomplete | The copy to the SD card was cut short: copy the `data` folder again. |
-| This disc is not supported | Only the European (G4BP08) and US (G4BE08) discs work. |
+| This disc is not supported | Only the European (G4BP08), US (G4BE08) and Japanese (G4BJ08) discs work. |
 | The discs are swapped / do not match | `disc0` must be disc 1 and `disc1` disc 2, of the same edition: run PuebloPrep again with the right images. |
 | Disc 2 not found | You can play until the game asks for disc 2; add disc 2 with PuebloPrep. |
 | Movies not found / Some movies are missing | Run PuebloPrep again with Movies ticked and a working ffmpeg (step 2). |
@@ -280,12 +288,13 @@ This is a beta. Known so far:
 - **Effects that read the picture back are missing**: some blur, depth of field and heat haze, part of the shadows.
   Bump mapping on some clothes is missing.
 - **Loading between areas** shows a still picture for up to about 2 seconds.
-- **The HOME Menu** can rarely crash when opened during play (the console restarts; the game itself does not stop).
-  Save before you open it.
+- **The HOME Menu** could crash when opened during play. The cause is found and fixed in beta5, and we hope it is gone
+  completely; please report it if it still happens. If you copy files to the SD card over the network (ftpd), restart the
+  console before you play: otherwise the HOME Menu can still crash. Save before you open it.
 - **Not yet checked on the console**: the rest of the game after roughly its first third (the playthrough is in progress -
   problems there are possible; please report them) and the extra modes. The movies' subtitles were checked in German; French, Spanish and
   Italian work the same way but were not watched.
-- **Saves**: both editions use the same memory card file (`/3ds/pueblo/saves/memcard.bin`), for the CIA and the
+- **Saves**: all editions use the same memory card file (`/3ds/pueblo/saves/memcard.bin`), for the CIA and the
   `.3dsx` alike. Copy it somewhere safe before you update.
 
 ## Bugs
@@ -352,6 +361,4 @@ tools/fetch_fonts.sh             the Noto Serif JP faces those two draw with (on
 
 PuebloCTR's own work ([overlay/](overlay), [patches/](patches), [tools/](tools), [docker/](docker)) is under the MIT licence ([LICENSE](LICENSE), with its scope).
 CubeEvil4 has its own licence; the game's code it reconstructs belongs to its owners. Third-party parts:
-[THIRD-PARTY.md](THIRD-PARTY.md).
-
-This project is not affiliated with or endorsed by Nintendo, Capcom or CRI Middleware.
+[THIRD-PARTY.md](THIRD-

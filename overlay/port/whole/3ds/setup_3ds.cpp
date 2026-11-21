@@ -35,15 +35,30 @@ void re4_3ds_gx_fill(int mode);                                 // gx_3ds.cpp (2
 void re4_3ds_hud_fps(int on);                                   // settings_3ds.cpp (R2)
 void re4_ui_setup(unsigned short* fb, const int* v, int lit, int tab);  // ui_bottom_3ds.cpp (R2; tabs 2026-11-19)
 int re4_ui_setup_hit(int tab, int x, int y, int* left);
+// (2026-11-21) the button mapping: its page (ui_bottom_3ds.cpp), the mapping (controls_3ds.cpp)
+void re4_ui_buttons(unsigned short* fb, int page, int lit, int catching, const unsigned char (*keys)[2]);
+int re4_ui_buttons_hit(int page, int x, int y);
+void re4_3ds_controls_start(int on);
+void re4_3ds_stick_deadzone(int pct);  // input_3ds.cpp (2026-11-21)
+void re4_3ds_controls_catch(int action);
+int re4_3ds_controls_catching(void);
+void re4_3ds_controls_reset(void);
+void re4_3ds_controls_binding(int a, unsigned char* k);
+int re4_3ds_controls_dirty(void);
+void re4_3ds_controls_poll(void);
 void re4_log(const char* fmt, ...);
+void re4_3ds_gyro_poll(void);  // input_3ds.cpp (2026-11-21): the gyro's zero into gyro.bin
 }
 
 namespace {
 
 const char kPath[] = "sdmc:/3ds/pueblo/settings.bin";
-const int kRows = 9, kGyroRow = 5, kStickRow = 7;  // (2026-11-18: row 7 the circle pad's sensitivity, 0..3)
+const int kRows = 11, kGyroRow = 5, kStickRow = 7;
+const int kDeadRow = 10, kDeadMax = 50, kDeadStep = 5;  // (2026-11-21) the Circle Pad's dead zone, percent  // (2026-11-18: row 7 the circle pad's sensitivity, 0..3)
 const int kStickSteps = 4;
 const int kPictureRow = 8, kPictureSteps = 3;  // (2026-11-19: row 8 the picture, 0 Fit 1 Stretch 2 Zoom)
+const int kButtonsRow = 9;  // (2026-11-21) the CONTROLS tab's link to the button mapping's page (no value of its own)
+const int kBtnActions = 20, kBtnReset = 20;  // the page's rows: the actions (controls_map.h), then "Reset to defaults"
 const int kGains[] = {0, 10, 15, 20, 25, 30, 40};
 const int kGainCount = (int) (sizeof(kGains) / sizeof(kGains[0]));
 const int kDefaults[kRows] = {0, 0, 0, 0, 0, 20, 0, 0, 0};  // (R0: the cheats off, the gyro on 2x, the counter off; the stick 1x; Fit)
@@ -57,7 +72,7 @@ struct File {
     u8 fps;         // the frame counter
     u8 stick;       // (2026-11-18; padding before: 0) the circle pad's sensitivity 0..3: 1x 1.25x 1.5x 2x
     u8 picture;     // (2026-11-19; padding before: 0) the picture 0..2: Fit, Stretch, Zoom
-    u8 pad[1];
+    u8 deadzone;    // (2026-11-21; padding before: 0) the Circle Pad's dead zone, percent 0..50 by 5
     u32 sum;        // FNV-1a of the bytes before
 };
 static_assert(sizeof(File) == 16, "settings.bin is 16 bytes");
@@ -65,6 +80,8 @@ static_assert(sizeof(File) == 16, "settings.bin is 16 bytes");
 int gV[kRows] = {0, 0, 0, 0, 0, 20, 0, 0, 0};  // the screen's values: the boxes 0/1, the gyro's gain x10, the steps
 volatile int gLit = -1;                  // the row under the finger
 volatile int gTab;                       // (2026-11-19) the open tab: 0 CHEATS (at each launch), 1 CONTROLS, 2 SCREEN
+volatile int gSub;                       // (2026-11-21) 1: the button mapping's page instead of the tab
+volatile int gPage;                      // its page: 0, 1
 bool gOn;                                // the screen (RE4_3DS_SETUP)
 volatile bool gInGame;                   // the title left for the gameplay
 bool gSawTitle;
@@ -116,6 +133,7 @@ void load()
     gV[6] = f.fps ? 1 : 0;
     gV[kStickRow] = f.stick < kStickSteps ? f.stick : 0;
     gV[kPictureRow] = f.picture < kPictureSteps ? f.picture : 0;
+    gV[kDeadRow] = f.deadzone <= kDeadMax && f.deadzone % kDeadStep == 0 ? f.deadzone : 0;
 }
 
 bool save()
@@ -130,6 +148,7 @@ bool save()
     f.fps = (u8) (gV[6] ? 1 : 0);
     f.stick = (u8) gV[kStickRow];
     f.picture = (u8) gV[kPictureRow];
+    f.deadzone = (u8) gV[kDeadRow];
     f.sum = fnv((const u8*) &f, offsetof(File, sum));
     FILE* fp = fopen(kPath, "r+b");  // (in place: the file keeps its cluster)
     if (!fp) {
@@ -173,6 +192,7 @@ void frame(unsigned)
     } else if (!gInGame && !title && re4_hud_life >= 0) {
         gInGame = true;
         gChanged = true;
+        re4_3ds_controls_catch(-1);  // (2026-11-21: a binding half caught stays as it was)
         if (gSawTitle) {
             take();
         }
@@ -194,6 +214,7 @@ extern "C" void re4_3ds_setup_start(void)
     const char* script = getenv("RE4_PAD_SCRIPT");
     const bool test = (replay && *replay) || (script && *script);
     gOn = v && *v ? *v != '0' : !test;
+    re4_3ds_controls_start(gOn);  // (2026-11-21: the button mapping only with the settings screen)
     if (!gOn) {
         re4_log("3ds: settings screen off (%s)", v && *v ? "RE4_3DS_SETUP=0" : "a replay or a pad script");
         return;
@@ -201,8 +222,15 @@ extern "C" void re4_3ds_setup_start(void)
     load();
     if (const char* t = getenv("RE4_3DS_SETUPTAB")) {  // (2026-11-19, the stand: a tab open from the start, 0..2)
         gTab = atoi(t) < 0 || atoi(t) > 2 ? 0 : atoi(t);
+        if (atoi(t) >= 3 && atoi(t) <= 6) {  // (2026-11-21) the button mapping's page 1, 2, 3 (3, 4, 6); 5: page 1, fire's
+            gTab = 1, gSub = 1, gPage = atoi(t) == 4 ? 1 : atoi(t) == 6 ? 2 : 0;  // keys awaited
+            if (atoi(t) == 5) {
+                re4_3ds_controls_catch(0);  // (forward)
+            }
+        }
     }
     re4_3ds_gx_fill(gV[kPictureRow]);  // (2026-11-19: the picture at once - the title shows it)
+    re4_3ds_stick_deadzone(gV[kDeadRow]);  // (2026-11-21: the dead zone at once, as the picture)
     re4_add_frame_hook(frame);
     re4_log("3ds: settings screen until the gameplay: cheats %d%d%d%d, pesetas %d, gyro %d, frame counter %d, "
             "stick step %d, picture %d", gV[0], gV[1], gV[2], gV[3], gV[4], gV[5], gV[6], gV[kStickRow],
@@ -218,7 +246,8 @@ extern "C" int re4_3ds_setup_visible(void)
 // The panel's thread: a new picture due since the last call
 extern "C" int re4_3ds_setup_dirty(void)
 {
-    if (!gChanged) {
+    const int mapping = re4_3ds_controls_dirty();  // (2026-11-21: a binding caught, the page's state)
+    if (!gChanged && !mapping) {
         return 0;
     }
     gChanged = false;
@@ -227,6 +256,14 @@ extern "C" int re4_3ds_setup_dirty(void)
 
 extern "C" void re4_3ds_setup_draw(unsigned short* fb)
 {
+    if (gSub) {  // (2026-11-21) the button mapping's page
+        unsigned char keys[kBtnActions][2];
+        for (int a = 0; a < kBtnActions; a++) {
+            re4_3ds_controls_binding(a, keys[a]);
+        }
+        re4_ui_buttons(fb, gPage, gLit, re4_3ds_controls_catching(), keys);
+        return;
+    }
     int v[kRows];
     memcpy(v, gV, sizeof(v));
     re4_ui_setup(fb, v, gLit, gTab);
@@ -235,6 +272,8 @@ extern "C" void re4_3ds_setup_draw(unsigned short* fb)
 // The panel's thread, each pass: the file half a second after the last change
 extern "C" void re4_3ds_setup_poll(void)
 {
+    re4_3ds_controls_poll();  // (2026-11-21: controls.bin)
+    re4_3ds_gyro_poll();  // (2026-11-21: also with the settings screen off - the panel's thread runs on)
     const u64 at = gWriteAt;
     if (at && svcGetSystemTick() >= at) {
         gWriteAt = 0;
@@ -263,8 +302,36 @@ extern "C" int re4_3ds_setup_touch(int phase, int x, int y)
     if (phase != 1) {
         return 1;
     }
+    if (gSub) {  // (2026-11-21) the button mapping's page: back, the other page, an action (catch its keys), the reset
+        const int r = re4_ui_buttons_hit(gPage, x, y);
+        if (r == -10 || r == -11) {
+            re4_3ds_controls_catch(-1);
+            if (r == -10) {
+                gSub = 0;
+            } else {
+                gPage = (gPage + 1) % 3;  // (three pages)
+            }
+            gLit = -1;
+        } else if (r == kBtnReset) {
+            re4_3ds_controls_catch(-1);
+            re4_3ds_controls_reset();
+            gLit = r;
+        } else if (r >= 0 && r < kBtnActions) {
+            re4_3ds_controls_catch(re4_3ds_controls_catching() == r ? -1 : r);  // (touched again: as it was)
+            gLit = r;
+        }
+        gChanged = true;
+        return 1;
+    }
     int left = 0;
     const int row = re4_ui_setup_hit(gTab, x, y, &left);
+    if (row == kButtonsRow) {  // (2026-11-21) the link: the page opens
+        gSub = 1;
+        gPage = 0;
+        gLit = -1;
+        gChanged = true;
+        return 1;
+    }
     if (row <= -2) {  // (2026-11-19) a tab: opened
         gTab = -2 - row;
         gLit = -1;
@@ -288,6 +355,10 @@ extern "C" int re4_3ds_setup_touch(int phase, int x, int y)
     } else if (row == kPictureRow) {  // (2026-11-19) the same arrows: Zoom -> Fit
         const int s = gV[kPictureRow];
         gV[kPictureRow] = left ? (s > 0 ? s - 1 : 0) : (s + 1) % kPictureSteps;
+    } else if (row == kDeadRow) {  // (2026-11-21) the arrows by 5 %: 50 % -> off; at once
+        const int s = gV[kDeadRow];
+        gV[kDeadRow] = left ? (s >= kDeadStep ? s - kDeadStep : 0) : (s >= kDeadMax ? 0 : s + kDeadStep);
+        re4_3ds_stick_deadzone(gV[kDeadRow]);
     } else {
         gV[row] = !gV[row];
     }

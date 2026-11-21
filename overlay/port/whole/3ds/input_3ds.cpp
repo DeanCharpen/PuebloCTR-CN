@@ -26,6 +26,7 @@
 #include <3ds.h>
 
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,7 @@
 extern "C" void re4_add_frame_hook(void (*hook)(unsigned));  // runtime/pad.cpp
 extern "C" void re4_pad_live(const Re4CorePad* pad);
 extern "C" void re4_memcard_flush(int force);
+extern "C" int re4_dvd_close_cached(void);  // runtime/dvd.cpp (2026-11-21): the disc files kept open, closed
 extern "C" void re4_pad_record_flush(void);  // runtime/pad.cpp: RE4_PAD_RECORD
 extern "C" void re4_3ds_finish(int code);  // system_3ds.cpp
 extern "C" void re4_gxq_park(int on);       // gx_thread_3ds.cpp: the GX thread through all records, the GPU given up
@@ -44,6 +46,9 @@ extern "C" void re4_3ds_hud_pause(int on);  // settings_3ds.cpp: the bottom scre
 extern "C" void re4_log_file_drain(void);   // runtime/log.cpp: the log's lines onto the SD card now
 extern "C" unsigned re4_3ds_hud_pad(int phase, int x, int y);  // settings_3ds.cpp (8.2): the buttons by touch
 extern "C" void re4_gyro_feed(float yaw, float pitch);  // runtime/pad.cpp (6.2f)
+extern "C" unsigned re4_3ds_controls_pad(unsigned keys, int select);  // controls_3ds.cpp (the button mapping)
+extern "C" int re4_3ds_controls_turn(void);                  // controls_3ds.cpp: the quick turn's stick back
+extern "C" void re4_3ds_controls_sticks(int* px, int* py, int* cx, int* cy, int rim);  // controls_3ds.cpp: moves, looks
 
 namespace {
 
@@ -51,14 +56,10 @@ namespace {
 const u16 kLeft = 0x0001, kRight = 0x0002, kDown = 0x0004, kUp = 0x0008, kZ = 0x0010, kR = 0x0020, kL = 0x0040,
           kA = 0x0100, kB = 0x0200, kX = 0x0400, kY = 0x0800, kStart = 0x1000;
 
-const struct {
-    u32 key;
-    u16 bit;
-} kButtons[] = {
-    { KEY_A, kA },         { KEY_B, kB },         { KEY_X, kX },       { KEY_Y, kY },         { KEY_L, kL },
-    { KEY_R, kR },         { KEY_ZR, kZ },        { KEY_DUP, kUp },    { KEY_DDOWN, kDown },  { KEY_DLEFT, kLeft },
-    { KEY_DRIGHT, kRight }, { KEY_START, kStart },
-};
+// (2026-11-21) the keys a button mapping uses, in the order of controls_map.h's ctl::Key (the layout above is its
+// default and the menus': controls_3ds.cpp)
+const u32 kMapKeys[] = {KEY_A, KEY_B, KEY_X, KEY_Y, KEY_L, KEY_R, KEY_ZL, KEY_ZR, KEY_DUP, KEY_DDOWN, KEY_DLEFT,
+                        KEY_DRIGHT, KEY_START};
 
 // A genuine controller at its gate in raw units (CoreInput.java MAIN_RAW, C_RAW): full deflection reaches the
 // clamp of PADClamp as on the GameCube. The 3DS's sticks at their rim: about 156 (0x9C, libctru); the largest
@@ -73,6 +74,26 @@ u64 gExitSince;
 // of 72; 51 % on a diagonal): at 1x nearly the whole way of a pad that no longer reaches its rim
 const int kStickGain[4] = {100, 125, 150, 200};
 int gStickRim = kRim;
+// (2026-11-21, a player's report of an aim that moves by itself: a worn Circle Pad's drift) the Circle Pad's dead zone,
+// percent of its rim, from the settings screen (0: none, as before): within it nothing, beyond it the rest stretched
+// to the rim (a full stick still at the rim); before the sensitivity
+int gDeadPct;
+
+void deadZone(circlePosition& c)
+{
+    if (gDeadPct <= 0) {
+        return;
+    }
+    const float dz = (float) kRim * (float) gDeadPct / 100.0f;
+    const float m = sqrtf((float) c.dx * c.dx + (float) c.dy * c.dy);
+    if (m <= dz) {
+        c.dx = c.dy = 0;
+        return;
+    }
+    const float f = (m - dz) / ((float) kRim - dz) * (float) kRim / m;
+    c.dx = (s16) lrintf((float) c.dx * f);
+    c.dy = (s16) lrintf((float) c.dy * f);
+}
 
 s8 axis(int v, int raw, int rim, int& seen)
 {
@@ -109,6 +130,36 @@ struct Gyro {
 // noise are below), not while R is held (a slow turn of the aim is no zero)
 const float kGyroStillDps = 5.0f, kGyroSoftDps = 0.6f, kGyroMaxDt = 0.1f, kGyroUpSmooth = 0.15f;
 const int kGyroStillFrames = 30;  // about a second of game frames
+// (2026-11-21) the zero kept between sessions (gyro.bin) and a soft one when no strict one comes: the stillest second
+// seen (a rolling window) after kGyroSoftAfter frames, if its spread is under kGyroSoftDps2
+const int kGyroSoftAfter = 150;
+const float kGyroSoftDps2 = 15.0f;
+const char kGyroZeroPath[] = "sdmc:/3ds/pueblo/gyro.bin";
+struct GyroZero {
+    float ring[kGyroStillFrames][3];  // the last frames' raw values (not aiming)
+    int ringN, ringAt;
+    float bestSpread, best[3];        // the stillest window so far: its spread (dps), its mean
+    int frames;                       // gyroRead calls since the start
+    bool loaded, strict, soft;        // a zero from the file / a strict one this session / a soft one
+    volatile bool dirty;              // a strict zero to keep (the bottom screen's thread writes it)
+    float saved[3];                   // the zero in the file
+    u64 savedAt;
+} gZero = {{}, 0, 0, 1e9f, {}, 0, false, false, false, false, {}, 0};
+
+u32 zeroSum(const u8* p, size_t n)
+{
+    u32 h = 2166136261u;
+    for (size_t i = 0; i < n; i++) {
+        h = (h ^ p[i]) * 16777619u;
+    }
+    return h;
+}
+
+struct GyroZeroFile {
+    char magic[4];  // "PGZ1"
+    float bias[3];
+    u32 sum;
+};
 
 void gyroStart()
 {
@@ -151,6 +202,22 @@ void gyroStart()
     HIDUSER_GetGyroscopeRawToDpsCoefficient(&coef);
     gGyro.perDps = coef > 0.0f ? coef : 14.375f;
     gGyro.on = R_SUCCEEDED(r) && gain > 0;
+    {  // (2026-11-21) the zero of the last session: the aim at once, refined as before when the console is still
+        GyroZeroFile f;
+        FILE* fp = fopen(kGyroZeroPath, "rb");
+        if (fp) {
+            const bool ok = fread(&f, 1, sizeof(f), fp) == sizeof(f) && !memcmp(f.magic, "PGZ1", 4) &&
+                            f.sum == zeroSum((const u8*) &f, offsetof(GyroZeroFile, sum));
+            fclose(fp);
+            if (ok) {
+                for (int k = 0; k < 3; k++) {
+                    gGyro.bias[k] = gZero.saved[k] = f.bias[k];
+                }
+                gGyro.biasSet = gZero.loaded = true;
+                re4_log("3ds: gyro zero from %s: %.1f %.1f %.1f", kGyroZeroPath, f.bias[0], f.bias[1], f.bias[2]);
+            }
+        }
+    }
     re4_log("3ds: gyro aim %s (0x%08lx): gain %.1f, raw/dps %.3f (HID %.3f), yaw %s%c%d, pitch %c%d%s",
             gGyro.on ? "on" : "off", (unsigned long) r, gGyro.gain, gGyro.perDps, coef,
             gGyro.world ? "about the vertical, else " : "", gGyro.sign[0] < 0 ? '-' : '+', gGyro.axis[0],
@@ -178,6 +245,38 @@ void gyroRead(unsigned frame, bool aiming)
     }
     gGyro.upSet = true;
     // the zero
+    gZero.frames++;
+    if (!aiming) {  // (2026-11-21) the rolling window for a soft zero: the stillest second seen so far
+        for (int k = 0; k < 3; k++) {
+            gZero.ring[gZero.ringAt][k] = (float) raw[k];
+        }
+        gZero.ringAt = (gZero.ringAt + 1) % kGyroStillFrames;
+        gZero.ringN += gZero.ringN < kGyroStillFrames;
+        if (gZero.ringN == kGyroStillFrames && !gZero.strict) {
+            float spread = 0.0f, mean[3];
+            for (int k = 0; k < 3; k++) {
+                float lo = gZero.ring[0][k], hi = lo, sum = 0.0f;
+                for (int i = 0; i < kGyroStillFrames; i++) {
+                    const float v = gZero.ring[i][k];
+                    lo = v < lo ? v : lo;
+                    hi = v > hi ? v : hi;
+                    sum += v;
+                }
+                mean[k] = sum / (float) kGyroStillFrames;
+                spread = (hi - lo) / gGyro.perDps > spread ? (hi - lo) / gGyro.perDps : spread;
+            }
+            if (spread < gZero.bestSpread) {
+                gZero.bestSpread = spread;
+                memcpy(gZero.best, mean, sizeof(mean));
+            }
+        }
+    }
+    if (!gGyro.biasSet && gZero.frames >= kGyroSoftAfter && gZero.bestSpread < kGyroSoftDps2) {
+        memcpy(gGyro.bias, gZero.best, sizeof(gZero.best));
+        gGyro.biasSet = gZero.soft = true;
+        re4_log("3ds: gyro zero (soft, no still second in %d frames; spread %.1f dps): %.1f %.1f %.1f", gZero.frames,
+                gZero.bestSpread, gGyro.bias[0], gGyro.bias[1], gGyro.bias[2]);
+    }
     if (aiming) {
         gGyro.still = 0;
     } else {
@@ -201,10 +300,20 @@ void gyroRead(unsigned frame, bool aiming)
             for (int k = 0; k < 3; k++) {
                 gGyro.bias[k] = gGyro.sum[k] / (float) gGyro.still;
             }
-            if (!gGyro.biasSet) {
-                re4_log("3ds: gyro zero at frame %u: %.1f %.1f %.1f", frame, gGyro.bias[0], gGyro.bias[1],
-                        gGyro.bias[2]);
+            if (!gZero.strict) {  // (2026-11-21: the first strict one of the session - logged and kept)
+                re4_log("3ds: gyro zero at frame %u: %.1f %.1f %.1f%s", frame, gGyro.bias[0], gGyro.bias[1],
+                        gGyro.bias[2], gZero.loaded ? " (the file's refined)" : gZero.soft ? " (the soft one replaced)" : "");
             }
+            {
+                bool moved = !gZero.strict;
+                for (int k = 0; k < 3; k++) {
+                    moved = moved || fabsf(gGyro.bias[k] - gZero.saved[k]) > 3.0f;
+                }
+                if (moved && (!gZero.strict || svcGetSystemTick() - gZero.savedAt > 30ull * SYSCLOCK_ARM11)) {
+                    gZero.dirty = true;
+                }
+            }
+            gZero.strict = true;
             gGyro.biasSet = true;
             gGyro.still = 0;
         }
@@ -274,6 +383,9 @@ void systemEvents(unsigned frame)
     if (aptShouldJumpToHome()) {
         re4_log("3ds: HOME at frame %u", frame);
         re4_memcard_flush(1);
+        // (2026-11-21) the FS's room for open files freed for the HOME menu: its mount of its NAND extdata failed with
+        // "out of resource" (0xD860466C) and it panicked (after a Game Reset, after ftpd); opened again at the next read
+        re4_log("3ds: HOME: %d disc files closed for the HOME menu", re4_dvd_close_cached());
         re4_3ds_hud_pause(1);
         re4_gxq_park(1);
         if (plain) {  // the top screen as libctru's own frame (black), not the renderer's
@@ -345,11 +457,22 @@ void readPad(unsigned frame)
         gExitSince = 0;
     }
     Re4CorePad pad = {};
-    for (const auto& b : kButtons) {
-        if (held & b.key) {
-            pad.buttons |= b.bit;
-        }
+    unsigned keys = 0;
+    for (unsigned i = 0; i < sizeof(kMapKeys) / sizeof(kMapKeys[0]); i++) {
+        keys |= (held & kMapKeys[i]) ? 1u << i : 0u;
     }
+    {  // (2026-11-21) the Circle Pad's directions past half way (its dead zone off): keys of the mapping too (13..16)
+        circlePosition c;
+        hidCircleRead(&c);
+        deadZone(c);
+        keys |= (c.dy > kRim / 2 ? 1u << 13 : 0u) | (c.dy < -kRim / 2 ? 1u << 14 : 0u) |
+                (c.dx < -kRim / 2 ? 1u << 15 : 0u) | (c.dx > kRim / 2 ? 1u << 16 : 0u);
+        circlePosition cs;  // the C stick's too (17..20)
+        hidCstickRead(&cs);
+        keys |= (cs.dy > kRim / 2 ? 1u << 17 : 0u) | (cs.dy < -kRim / 2 ? 1u << 18 : 0u) |
+                (cs.dx < -kRim / 2 ? 1u << 19 : 0u) | (cs.dx > kRim / 2 ? 1u << 20 : 0u);
+    }
+    pad.buttons = (u16) re4_3ds_controls_pad(keys, (held & KEY_SELECT) != 0);  // (2026-11-21: the button mapping)
     pad.buttons |= touchButtons;
     if (held & KEY_SELECT) {
         pad.buttons &= (u16) ~kStart;
@@ -357,15 +480,28 @@ void readPad(unsigned frame)
     circlePosition circle, cstick;
     hidCircleRead(&circle);
     hidCstickRead(&cstick);
+    deadZone(circle);  // (2026-11-21) the settings' "Circle Pad dead zone": a worn pad's drift ignored
+    {  // (2026-11-21) the moves and looks of the button mapping: the two sticks from the sticks' directions and the keys
+        int px = circle.dx, py = circle.dy, cx = cstick.dx, cy = cstick.dy;
+        re4_3ds_controls_sticks(&px, &py, &cx, &cy, kRim);
+        circle.dx = (s16) px;
+        circle.dy = (s16) py;
+        cstick.dx = (s16) cx;
+        cstick.dy = (s16) cy;
+    }
     pad.stickX = axis(circle.dx, kMainRaw, gStickRim, gMax[0]);
     pad.stickY = axis(circle.dy, kMainRaw, gStickRim, gMax[1]);
     pad.substickX = axis(cstick.dx, kCRaw, kRim, gMax[2]);
     pad.substickY = axis(cstick.dy, kCRaw, kRim, gMax[3]);
+    if (re4_3ds_controls_turn()) {  // (2026-11-21) the quick turn on its own button: the stick fully back (then B)
+        pad.stickX = 0;
+        pad.stickY = (s8) -kMainRaw;
+    }
     // digital shoulders: the trigger all the way (pad.cpp: the game takes the click or the value)
     pad.triggerL = (pad.buttons & kL) ? 0xFF : 0;
     pad.triggerR = (pad.buttons & kR) ? 0xFF : 0;
     re4_pad_live(&pad);
-    gyroRead(frame, (held & KEY_R) != 0);
+    gyroRead(frame, (pad.buttons & kR) != 0);  // (the aim: the game's R, wherever the mapping put it)
 }
 
 }  // namespace
@@ -411,6 +547,41 @@ extern "C" void re4_3ds_gyro_set(int gain10)
         gGyro.on = false;
     }
     gGyro.gain = (float) gain10 / 10.0f;
+}
+
+// (2026-11-21; setup_3ds.cpp: at once, the game's thread) the Circle Pad's dead zone from the settings screen, percent
+extern "C" void re4_3ds_stick_deadzone(int pct)
+{
+    gDeadPct = pct < 0 ? 0 : pct > 50 ? 50 : pct;
+    re4_log("3ds: circle pad: dead zone %d %%", gDeadPct);
+}
+
+// (2026-11-21) the bottom screen's thread (setup_3ds.cpp re4_3ds_setup_poll): a strict gyro zero into gyro.bin
+extern "C" void re4_3ds_gyro_poll(void)
+{
+    if (!gZero.dirty) {
+        return;
+    }
+    gZero.dirty = false;
+    GyroZeroFile f;
+    memcpy(f.magic, "PGZ1", 4);
+    for (int k = 0; k < 3; k++) {
+        f.bias[k] = gGyro.bias[k];
+    }
+    f.sum = zeroSum((const u8*) &f, offsetof(GyroZeroFile, sum));
+    FILE* fp = fopen(kGyroZeroPath, "r+b");  // (in place: the file keeps its cluster)
+    if (!fp) {
+        fp = fopen(kGyroZeroPath, "wb");
+    }
+    const bool ok = fp && fwrite(&f, 1, sizeof(f), fp) == sizeof(f);
+    if (fp) {
+        fclose(fp);
+    }
+    if (ok) {
+        memcpy(gZero.saved, f.bias, sizeof(f.bias));
+        gZero.savedAt = svcGetSystemTick();
+    }
+    re4_log("3ds: gyro zero %s %s", ok ? "kept in" : "NOT written to", kGyroZeroPath);
 }
 
 // (2026-11-18; setup_3ds.cpp take, the game's thread as the gameplay starts) the circle pad's sensitivity from the

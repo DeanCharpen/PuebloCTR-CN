@@ -2,7 +2,8 @@
 // bottom screen (English only, the owner: the game's language is not known yet), in the look of the settings screen
 // (ui_bottom_3ds.cpp re4_ui_check). The owner's choice "strictly by the matter":
 // - the end (START: exit): an Old 3DS / 2DS; too little memory; no data/disc0, or no sys/boot.bin / sys/fst.bin in it;
-//   an edition the beta does not play (the Japanese one, the debug build, an unknown disc); disc 2 in data/disc0; a
+//   an edition the beta does not play (the debug build, an unknown disc; the Japanese one plays since stage 69,
+//   2026-11-21); disc 2 in data/disc0; a
 //   data/disc1 that is not disc 2 of the same edition;
 // - a warning (A: on, START: exit), all on one screen: no data/disc1 (the game plays up to the disc change); movies
 //   missing in movie/ (the CRI player then: an orange screen); no texture pack or one that does not fit (the textures
@@ -275,7 +276,9 @@ extern "C" int re4_3ds_check_data(void)
     const bool debug = e08 && id0[6] == 0 && (fst0 == 0x28FE00 || fst0 == 0);
     re4_log("3ds: the start's check: %s %.6s disc %d (FST at 0x%lx): %s", disc0, (const char*) id0, (int) id0[6],
             (unsigned long) fst0, eu ? "Europe" : jp ? "Japan" : debug ? "the debug build" : e08 ? "USA" : "unknown");
-    const int edition = test("jp") ? 1 : test("debug") ? 2 : test("unknown") ? 3 : jp ? 1 : debug ? 2 : eu || e08 ? 0 : 3;
+    // (stage 69) the Japanese discs play: the core reads them as upstream does (language 0, ss/Jpn, the *_j fonts;
+    // their gore as the US release's, patch 0212); RE4_3DS_CHECKTEST=jp still shows the old refusal
+    const int edition = test("jp") ? 1 : test("debug") ? 2 : test("unknown") ? 3 : debug ? 2 : eu || e08 || jp ? 0 : 3;
     if (edition) {
         add(lines, nLines, UI_C_H_ED | kHead);
         add(lines, nLines, edition == 1 ? UI_C_ED_JP : edition == 2 ? UI_C_ED_DBG : UI_C_ED_UNK);

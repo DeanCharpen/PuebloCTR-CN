@@ -401,7 +401,8 @@ void outline(u16* fb, int x, int y, int w, int h, u16 c)
 // (2026-11-19) The settings screen's tabs (more rows than a page holds): CHEATS, CONTROLS, SCREEN - each its rows, as
 // the indices of setup_3ds.cpp's values (0..4 the cheats and the money, 5 the gyro, 6 the frame counter, 7 the circle
 // pad's sensitivity, 8 the picture); -1 ends a tab
-const int kTabRows[3][5] = {{0, 1, 2, 3, 4}, {5, 7, -1, -1, -1}, {8, 6, -1, -1, -1}};
+// (2026-11-21: 9 the button mapping's row on CONTROLS - a link to its page, re4_ui_buttons; 10 the Circle Pad's dead zone)
+const int kTabRows[3][5] = {{0, 1, 2, 3, 4}, {5, 7, 10, 9, -1}, {8, 6, -1, -1, -1}};
 
 // The top of a tab's `slot`th row - also for the touch (setup_3ds.cpp)
 extern "C" int re4_ui_setup_row_y(int slot)
@@ -425,7 +426,8 @@ extern "C" int re4_ui_setup_hit(int tab, int x, int y, int* left)
         const int y0 = re4_ui_setup_row_y(s);
         if (y >= y0 && y < y0 + UI_S_ROW_H) {
             const int i = kTabRows[tab][s];
-            *left = (i == 5 || i == 7 || i == 8) && x >= UI_S_ARROW_L - 28 && x < (UI_S_ARROW_L + UI_S_GAIN_X) / 2;
+            *left = (i == 5 || i == 7 || i == 8 || i == 10) && x >= UI_S_ARROW_L - 28 &&
+                    x < (UI_S_ARROW_L + UI_S_GAIN_X) / 2;  // (2026-11-21: 10 the dead zone)
             return i;
         }
     }
@@ -495,6 +497,25 @@ extern "C" void re4_ui_setup(unsigned short* fb, const int* v, int lit, int tab)
             fill(fb, 8, y0 + 1, 304, UI_S_ROW_H - 3, slab);
             fill(fb, 8, y0 + UI_S_ROW_H - 2, 304, 1, bloodLit);
         }
+        if (i == 9) {  // (2026-11-21) the button mapping: a link (no value of its own), an arrow to its page
+            pieceText(fb, kUiStr[lg][UI_S_BUTTONS], 16, y0 + tb, 0, kBone, true);
+            blit(fb, UI_SHAPE_ARROW_R, UI_S_ARROW_R, y0 + UI_S_ROW_H / 2, kBone);
+            continue;
+        }
+        if (i == 10) {  // (2026-11-21) the Circle Pad's dead zone: OFF (dim, as the gyro's) or the percent
+            const int dz = v[10];
+            pieceText(fb, kUiStr[lg][UI_S_DEADZONE], 16, y0 + tb, 0, lit == i ? kBoneLit : kBone, true);
+            blit(fb, UI_SHAPE_ARROW_L, UI_S_ARROW_L, y0 + UI_S_ROW_H / 2, dz ? kBtnText : kDim);
+            blit(fb, UI_SHAPE_ARROW_R, UI_S_ARROW_R, y0 + UI_S_ROW_H / 2, dz ? kBtnText : kDim);
+            if (dz) {
+                char t[8];
+                snprintf(t, sizeof(t), "%d%%", dz);
+                number(fb, UI_DS_MID, t, UI_S_GAIN_X, y0 + tb, 1, kBoneLit, true);
+            } else {
+                pieceText(fb, kUiStr[lg][UI_S_OFF], UI_S_GAIN_X, y0 + tb, 1, kDim, false);
+            }
+            continue;
+        }
         const bool on = v[i] != 0;
         // (the owner: a default value is no "off") dim: an unticked box and the gyro off; the stick's 1x, the picture's
         // Fit as bright as any other value
@@ -532,6 +553,99 @@ extern "C" void re4_ui_setup(unsigned short* fb, const int* v, int lit, int tab)
         }
     }
     pieceText(fb, kUiStr[lg][UI_S_FOOT], 160, UI_S_FOOT_BASE, 1, kDim, false);
+}
+
+// --- (2026-11-21) the button mapping's page (3ds/setup_3ds.cpp, 3ds/controls_3ds.cpp) ---------------------------------
+
+// its rows: the actions of controls_map.h (0..19), 20 "Reset to defaults"; three pages of seven rows of 22 px (-1: none)
+const int kBtnPages = 3;
+const int kBtnRows[kBtnPages][7] = {{0, 1, 2, 3, 4, 5, 6}, {7, 8, 9, 10, 11, 12, 13}, {14, 15, 16, 17, 18, 19, 20}};
+const int kBtnRowH = 22;
+const int kBtnLabel[21] = {UI_A_UP,     UI_A_DOWN,  UI_A_LEFT,  UI_A_RIGHT,  UI_A_LUP,   UI_A_LDOWN, UI_A_LLEFT,
+                           UI_A_LRIGHT, UI_A_ACTION, UI_A_RUN,  UI_A_TURN,   UI_A_AIM,   UI_A_FIRE,  UI_A_RELOAD,
+                           UI_A_KNIFE,  UI_A_SLASH, UI_A_ASHLEY, UI_A_CASE,  UI_A_MAP,   UI_A_OPTIONS, UI_S_RESET};
+const int kKeyName[21] = {UI_K_A,     UI_K_B,     UI_K_X,     UI_K_Y,      UI_K_L,     UI_K_R,     UI_K_ZL,
+                          UI_K_ZR,    UI_K_UP,    UI_K_DOWN,  UI_K_LEFT,   UI_K_RIGHT, UI_K_START, UI_K_PUP,
+                          UI_K_PDOWN, UI_K_PLEFT, UI_K_PRIGHT, UI_K_CUP,   UI_K_CDOWN, UI_K_CLEFT, UI_K_CRIGHT};
+
+// What is under (x, y): a row (0..20), -10 back to the tabs (the band's left half), -11 the other page (its right half),
+// -1 nothing
+extern "C" int re4_ui_buttons_hit(int page, int x, int y)
+{
+    if (x < 8 || x >= 312) {
+        return -1;
+    }
+    if (y >= UI_S_TAB_Y && y < UI_S_TAB_Y + UI_S_TAB_H) {
+        return x < 160 ? -10 : -11;
+    }
+    page = page < 0 || page >= kBtnPages ? 0 : page;
+    for (int s = 0; s < 7 && kBtnRows[page][s] >= 0; s++) {
+        const int y0 = UI_S_ROW1_Y + s * kBtnRowH;
+        if (y >= y0 && y < y0 + kBtnRowH) {
+            return kBtnRows[page][s];
+        }
+    }
+    return -1;
+}
+
+// The page into `fb`: `keys` each action's keys (controls_map.h's ctl::Key, 0xFF none), `catching` the action whose
+// keys are awaited (-1 none), `lit` the row under the finger
+extern "C" void re4_ui_buttons(unsigned short* fb, int page, int lit, int catching, const unsigned char (*keys)[2])
+{
+    gradient(fb);
+    re4_ui_clip(0, 0, 320, 240);
+    const int lg = lang();
+    const u16 blood = rgb(90, 10, 10), bloodLit = rgb(170, 22, 18), slab = rgb(40, 30, 30);
+    page = page < 0 || page >= kBtnPages ? 0 : page;
+    fill(fb, 8, UI_S_LINE1_Y, 305, 1, blood);
+    fill(fb, 8, UI_S_LINE2_Y, 305, 1, blood);
+    pieceText(fb, kUiStr[lg][UI_S_BTN_TITLE], 12, UI_S_TITLE_BASE, 0, kBone, true);
+    versionText(fb, 308, UI_S_TITLE_BASE, kDim);
+    // the band of the tabs: back to CONTROLS (left), the page and its arrows (right)
+    const int mid = UI_S_TAB_Y + UI_S_TAB_H / 2;
+    fill(fb, 9, UI_S_TAB_Y + UI_S_TAB_H - 1, 302, 1, blood);
+    blit(fb, UI_SHAPE_ARROW_L, 14, mid, kBone);
+    pieceText(fb, kUiStr[lg][UI_S_TAB_CONTROLS], 28, UI_S_TAB_BASE, 0, kBone, false);
+    blit(fb, UI_SHAPE_ARROW_L, 250, mid, kBtnText);
+    char pages[8];
+    snprintf(pages, sizeof(pages), "%d/%d", page + 1, kBtnPages);
+    number(fb, UI_DS_SMALL, pages, 275, UI_S_TAB_BASE, 1, kBone, false);
+    blit(fb, UI_SHAPE_ARROW_R, 296, mid, kBtnText);
+    const int tb = kBtnRowH / 2 + 4;
+    for (int s = 0; s < 7 && kBtnRows[page][s] >= 0; s++) {
+        const int i = kBtnRows[page][s];
+        const int y0 = UI_S_ROW1_Y + s * kBtnRowH;
+        const bool wait = i == catching;
+        if (lit == i || wait) {
+            fill(fb, 8, y0 + 1, 304, kBtnRowH - 3, slab);
+            fill(fb, 8, y0 + kBtnRowH - 2, 304, 1, bloodLit);
+        }
+        pieceText(fb, kUiStr[lg][kBtnLabel[i]], 16, y0 + tb, 0, lit == i || wait ? kBoneLit : kBone, true);
+        if (i >= 20) {
+            continue;  // (the reset: no value)
+        }
+        if (wait) {
+            pieceText(fb, kUiStr[lg][UI_S_PRESS], 304, y0 + tb, 2, kGold, false);
+            continue;
+        }
+        const unsigned char* k = keys[i];
+        const int n = k[0] >= 21 ? 0 : k[1] >= 21 ? 1 : 2;
+        if (!n) {
+            pieceText(fb, kUiStr[lg][UI_K_NONE], 304, y0 + tb, 2, kDim, false);
+            continue;
+        }
+        int w = kUiPiece[kUiStr[lg][kKeyName[k[0]]]].adv;
+        if (n == 2) {
+            w += kUiPiece[kUiStr[lg][UI_K_PLUS]].adv + kUiPiece[kUiStr[lg][kKeyName[k[1]]]].adv;
+        }
+        int x = 304 - w;
+        x += pieceText(fb, kUiStr[lg][kKeyName[k[0]]], x, y0 + tb, 0, kBoneLit, true);
+        if (n == 2) {
+            x += pieceText(fb, kUiStr[lg][UI_K_PLUS], x, y0 + tb, 0, kBtnText, false);
+            pieceText(fb, kUiStr[lg][kKeyName[k[1]]], x, y0 + tb, 0, kBoneLit, true);
+        }
+    }
+    pieceText(fb, kUiStr[lg][UI_S_BTN_FOOT], 160, UI_S_FOOT_BASE, 1, kDim, false);
 }
 
 // --- R3: the checks at the start ------------------------------------------------------------------------------------------

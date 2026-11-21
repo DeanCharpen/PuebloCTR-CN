@@ -22,6 +22,7 @@
 #include <malloc.h>
 #include <math.h>
 #include <map>
+#include <mutex>
 #include <new>
 #include <unordered_map>
 #include <unordered_set>
@@ -39,7 +40,11 @@
 #include "re4_movie_hw.h"
 #include "re4_tex_dump.h"
 
-extern "C" volatile u32 re4_hud_gpu_busy, re4_hud_gpu_all;  // settings_3ds.cpp (6.6): the panel's, from the start
+extern "C" volatile u32 re4_hud_gpu_busy, re4_hud_gpu_all;
+extern "C" int re4_occ_on;  // (occlusion cull, the end of this file)
+extern "C" volatile int re4_occ_sparse;
+extern "C" int re4_gxq_on;
+extern "C" void re4_gxq_fn(void (*fn)(uint32_t, uint32_t), uint32_t a, uint32_t b);  // settings_3ds.cpp (6.6): the panel's, from the start
 
 // citro3d 1.7.1 (source/internal.h): its context begins with the GX command queue, which
 // C3D_FrameBegin stops and only C3D_FrameEnd runs; the renderer runs it inside a frame (kick()).
@@ -1366,6 +1371,29 @@ volatile u32 gBusySamples, gAllSamples;
 u64 gBusyFrom;  // the clock at the last log line
 bool gBusyOn;
 
+// (occlusion cull, 2026-11-20; docs/22-occlusion.md) The depth of a picture after the room's models (before table
+// RE4_3DS_OCC_COPYAT), as 8 x 8 tiles of the farthest distance, for the game's thread (re4_occ_info, the end of
+// this file): the copy in the GX queue (as the water's), the tiles two pictures on (that queue done)
+struct OccHiz {
+    u32 seq, tag;
+    float m[4][4];       // eye -> the screen's clip (x over 400, y over 240, +1 at the top): the last perspective's
+    float scale;         // the w-buffer's depth (0..1) -> the distance (p5 / p4); 0: not a w-buffer picture
+    float tile[50][30];  // the copy's 8 x 8 tiles (its x = 239 - screen y, its rows = screen x / 8): the farthest
+};                       // distance; INFINITY: cleared there
+int gOccOn = 1, gOccCopyAt = 12;
+u8* gOccBuf[2];
+u32 gOccBufFrame[2] = {~0u, ~0u}, gOccBufTag[2];
+float gOccBufM[2][4][4], gOccBufScale[2];
+bool gOccCopied;
+u32 gOccPicTag;
+float gOccM[4][4], gOccScale;
+u32 gOccCopies, gOccBuilds, gOccNoQueue, gOccSvcFail;
+u64 gOccBuildTicks;
+std::mutex gOccLock;
+OccHiz gOccPub;
+void occCopy();
+void occBuild();
+
 void busySampler(void*)
 {
     for (;;) {
@@ -1721,6 +1749,10 @@ void uploadProjection(const u32* xfReg)
             m[1][i] = c * m[1][i] + d * m[3][i];
         }
     }
+    if (gOccOn && xfReg[0x26] == 0) {  // (occlusion cull) the last perspective's eye -> the screen's clip
+        memcpy(gOccM, m, sizeof(gOccM));
+        gOccScale = gFogMode == 2 && p[5] < 0.0f ? p[5] / p[4] : 0.0f;
+    }
     C3D_FVec* u = C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, gLocProj, 4);
     const float* rows[4] = {m[1], m[0], m[2], m[3]};
     for (int r = 0; r < 4; r++) {
@@ -1994,6 +2026,9 @@ void ownerTag(const uint32_t owner[4])
         gWaterArmedRefract = owner[2] == 1;  // (2026-11-18)
         return;
     }
+    if (gOccOn && gInFrame && !gOccCopied && owner[2] >= gOccCopyAt && owner[2] != 0xFF) {
+        occCopy();  // (occlusion cull) the room's models drawn: their depth
+    }
     gOwnerData = owner[0];
 }
 
@@ -2222,6 +2257,7 @@ void frameBegin()
 void beginFrame()
 {
     frameBegin();
+    occBuild();  // (occlusion cull)
     placePicture();
     gUnifBound[0] = gUnifBound[1] = false;  // (the program's bind below)
     C3D_RenderTargetClear(gTarget, C3D_CLEAR_ALL, 0x000000FF, gFogMode == 2 ? 0xFFFFFF : 0);
@@ -3377,6 +3413,87 @@ void waterCopy(const uint32_t* bp)
     gRefractCopies += refract;
 }
 
+// (occlusion cull) The depth buffer into gOccBuf (the picture's parity), as the water's copy: the draws before
+// kicked, GX_TextureCopy in the GX queue
+void occCopy()
+{
+    gOccCopied = true;
+    if (re4_occ_sparse && (gFrameNo & 7)) {  // (little hidden for a while: a copy every 8th picture, re4_occ_frame)
+        return;
+    }
+    const int b = gFrameNo & 1;
+    const gxCmdQueue_s& q = *gQueue;
+    if (!gOccBuf[b] || q.numEntries + kQueueForKick + 2 > q.maxEntries) {
+        gOccNoQueue++;
+        return;
+    }
+    flushBatch();
+    kick();
+    GX_TextureCopy((u32*) gTarget->frameBuf.depthBuf, GX_BUFFER_DIM(30 * 256 >> 4, 0), (u32*) gOccBuf[b],
+                   GX_BUFFER_DIM(30 * 256 >> 4, 0), 240 * 400 * 4, GX_TRANSFER_RAW_COPY(1));
+    gOccBufFrame[b] = gFrameNo;
+    gOccBufTag[b] = gOccPicTag;
+    memcpy(gOccBufM[b], gOccM, sizeof(gOccM));
+    gOccBufScale[b] = gOccScale;
+    gOccCopies++;
+}
+
+// (occlusion cull) The game's frame of the pictures from here (re4_occ_frame, a record in the ring)
+void occTagFn(uint32_t tag, uint32_t)
+{
+    gOccPicTag = tag;
+}
+
+// (occlusion cull) At a picture's begin: the copies whose queue is done (two pictures on) into tiles, the oldest
+// first, to the game's thread
+void occBuild()
+{
+    if (!gOccOn) {
+        return;
+    }
+    for (int pass = 0; pass < 2; pass++) {
+        int b = gOccBufFrame[0] <= gOccBufFrame[1] ? 0 : 1;
+        if (pass) {
+            b ^= 1;
+        }
+        if (gOccBufFrame[b] == ~0u || gFrameNo < gOccBufFrame[b] + 2) {
+            continue;
+        }
+        const u64 from = svcGetSystemTick();
+        const u32* px = (const u32*) gOccBuf[b];
+        // the GPU wrote it: the CPU's cache lines of it are old (the kernel's call: 0.5 ms, GSP's 0.95)
+        if (R_FAILED(svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32) px, 240 * 400 * 4))) {
+            gOccSvcFail++;
+            GSPGPU_InvalidateDataCache((void*) px, 240 * 400 * 4);
+        }
+        static OccHiz h;
+        const float s = gOccBufScale[b] / 16777215.0f;
+        for (int t = 0; t < 1500; t++, px += 64) {
+            __builtin_prefetch(px + 128);
+            __builtin_prefetch(px + 136);
+            u32 most = 0;  // (D24S8: the depth in the top 24 bits once the stencil byte is shifted out)
+            for (int i = 0; i < 64; i += 4) {
+                const u32 d0 = px[i] << 8, d1 = px[i + 1] << 8, d2 = px[i + 2] << 8, d3 = px[i + 3] << 8;
+                const u32 m01 = d0 > d1 ? d0 : d1, m23 = d2 > d3 ? d2 : d3, mm = m01 > m23 ? m01 : m23;
+                most = mm > most ? mm : most;
+            }
+            most >>= 8;
+            h.tile[t / 30][t % 30] = most >= 0xFFFFFF ? INFINITY : (float) most * s;
+        }
+        h.tag = gOccBufTag[b];
+        memcpy(h.m, gOccBufM[b], sizeof(h.m));
+        h.scale = gOccBufScale[b];
+        gOccBufFrame[b] = ~0u;
+        {
+            std::lock_guard<std::mutex> lock(gOccLock);
+            h.seq = gOccPub.seq + 1;
+            gOccPub = h;
+        }
+        gOccBuilds++;
+        gOccBuildTicks += svcGetSystemTick() - from;
+    }
+}
+
 // (R4) A render target's copy (BP 0x52 between its tags): the draws before kicked, then the TW x TH pixels of the
 // frame's lower left corner (rows of memory 0..TH, 30 tiles a row in the buffer, the first TW / 8 of them) into the
 // target's texture by GX_TextureCopy in the GX queue. A copy outside a pass to such a destination: that one forgotten.
@@ -3732,6 +3849,38 @@ struct Part {
     u32 offset, bytes;
 };
 
+// The fast path of setAttributes (2026-11-19, the idea of CitroWaker's recorded draws, our own state): the plan of the
+// last draw that went the slow way - what it read (the inputs) and what it made (the coordinates' sources, the fixed
+// attributes, the buffers: each its base - the vertices or the second buffer - its first offset and its flags). The
+// same inputs: the plan again, only the addresses new (one conversion to physical a base). RE4_3DS_ATTRFAST: 0 the
+// slow way always, 1 the fast path, 2 both and compared
+u32 gAttrFast = 1;
+struct AttrRec {
+    const u8* base;
+    u32 from;
+};
+AttrRec gAttrRec[12];
+int gAttrRecN;
+struct AttrPlan {
+    bool valid;
+    u32 layout, stride, key;
+    bool vertexColor, lit, rest, texGen;
+    int units;
+    int unitCoord[3];
+    u32 gen[3];
+    bool tc[3], fromPos[3], fromNrm[3], again[3];
+    bool normal, matrix, texDiv;
+    int bufCount;
+    u8 bufRest[12];
+    u32 bufFrom[12], bufFlags0[12], bufFlags1[12];
+};
+AttrPlan gPlan, gPlanIn;
+const u8* gAttrV;  // the slow way's vertices and second buffer base (to tell the recorded bases apart)
+const u8* gAttrRestBase;
+bool gAttrChecking;
+C3D_BufInfo gAttrFastBuf;
+u32 gAttrFastDraws, gAttrSlowDraws, gAttrMismatch, gAttrPlanFail;
+
 // The vertex buffers into the registers: what changed since citro3d's copy (gBufLeanFrom)
 void bindBufInfo(const C3D_BufInfo& b)
 {
@@ -3785,6 +3934,11 @@ bool addBuffer(C3D_BufInfo* bi, const u8* v, u32 stride, const Part* parts, int 
     if (!pad(stride + from - at)) {
         return false;
     }
+    if (gAttrRecN < 12) {  // (2026-11-19, the fast path's plan)
+        gAttrRec[gAttrRecN].base = v;
+        gAttrRec[gAttrRecN].from = from;
+    }
+    gAttrRecN++;
     return BufInfo_Add(bi, v + from, stride, count, perm) >= 0;
 }
 
@@ -3824,8 +3978,11 @@ bool rowsFit(const Re4GxDraw& d, const void* vertices, Block* b)
 // The vertex attributes: each from the vertex where it has it, else fixed for the draw. One buffer
 // holds them all; a coordinate a second unit also reads comes again from a buffer of its own. The
 // normal only for a draw with lights (`lit`). False: the layout does not fit the PICA's buffers.
-bool setAttributes(const Re4GxDraw& d, const void* vertices, bool vertexColor, bool lit, const uint32_t* xfMem,
-                   const uint32_t* xfReg)
+void attrSlowDone(const C3D_BufInfo& b, u32 key, const bool* tc, const bool* fromPos, const bool* fromNrm,
+                  const bool* again, bool normal, bool matrix);
+
+bool setAttributesSlow(const Re4GxDraw& d, const void* vertices, bool vertexColor, bool lit, const uint32_t* xfMem,
+                       const uint32_t* xfReg)
 {
     const bool matrix = d.layout & RE4_GX_V_MATRIX;
     const int nrmKind = (d.layout & RE4_GX_V_NORMAL) ? 1 : (d.layout & RE4_GX_V_NORMAL_PACKED) ? 2 : 0;
@@ -3942,7 +4099,170 @@ bool setAttributes(const Re4GxDraw& d, const void* vertices, bool vertexColor, b
             setFixed(gTexAttr[u], 0.0f, 0.0f, 0.0f, 1.0f);  // (w: the shader divides by it)
         }
     }
+    attrSlowDone(buffers, key, tc, fromPos, fromNrm, again, normal != 0, matrix);
     bindBufInfo(buffers);
+    return true;
+}
+
+void attrSlowDone(const C3D_BufInfo& b, u32 key, const bool* tc, const bool* fromPos, const bool* fromNrm,
+                  const bool* again, bool normal, bool matrix)
+{
+    if (gAttrChecking) {  // (RE4_3DS_ATTRFAST=2) the fast path's buffers and choices against these
+        bool same = gAttrFastBuf.base_paddr == b.base_paddr && gAttrFastBuf.bufCount == b.bufCount &&
+                    !memcmp(gAttrFastBuf.buffers, b.buffers, sizeof(C3D_BufCfg) * (size_t) b.bufCount) &&
+                    key == gPlan.key && gTexDiv == gPlan.texDiv && normal == gPlan.normal && matrix == gPlan.matrix;
+        for (int u = 0; u < 3; u++) {
+            same &= tc[u] == gPlan.tc[u] && fromPos[u] == gPlan.fromPos[u] && fromNrm[u] == gPlan.fromNrm[u] &&
+                    again[u] == gPlan.again[u];
+        }
+        if (!same) {
+            if (gAttrMismatch < 8) {
+                re4_log("3ds: attributes fast: differs from the slow way: layout %08lx stride %lu, buffers %d/%d, "
+                        "first offsets %08lx/%08lx", (unsigned long) gPlan.layout, (unsigned long) gPlan.stride,
+                        gAttrFastBuf.bufCount, b.bufCount, (unsigned long) gAttrFastBuf.buffers[0].offset,
+                        (unsigned long) b.buffers[0].offset);
+            }
+            gAttrMismatch++;
+        }
+        return;
+    }
+    AttrPlan& p = gPlanIn;
+    p.valid = gAttrRecN == b.bufCount && b.bufCount <= 12;
+    p.key = key;
+    p.texDiv = gTexDiv;
+    p.normal = normal;
+    p.matrix = matrix;
+    for (int u = 0; u < 3; u++) {
+        p.tc[u] = tc[u];
+        p.fromPos[u] = fromPos[u];
+        p.fromNrm[u] = fromNrm[u];
+        p.again[u] = again[u];
+    }
+    p.bufCount = b.bufCount;
+    for (int i = 0; p.valid && i < b.bufCount; i++) {
+        const u8* base = gAttrRec[i].base;
+        p.valid = base == gAttrV || (p.rest && base == gAttrRestBase);
+        p.bufRest[i] = base != gAttrV;
+        p.bufFrom[i] = gAttrRec[i].from;
+        p.bufFlags0[i] = b.buffers[i].flags[0];
+        p.bufFlags1[i] = b.buffers[i].flags[1];
+    }
+    if (p.valid) {
+        gPlan = p;
+    } else {
+        gPlan.valid = false;
+        gAttrPlanFail++;
+    }
+}
+
+// The fast path: false when the plan does not hold (the slow way then); `bind` false: the buffers into gAttrFastBuf
+bool attrFast(const Re4GxDraw& d, const void* vertices, bool vertexColor, bool lit, const uint32_t* xfMem,
+              const uint32_t* xfReg, bool bind)
+{
+    const AttrPlan& p = gPlan;
+    if (!p.valid || p.layout != d.layout || p.stride != d.stride || p.vertexColor != vertexColor || p.lit != lit ||
+        p.rest != (gRest != nullptr) || p.units != gUnits || p.texGen != gTexGen || p.key != gAttrKey) {
+        return false;
+    }
+    for (int u = 0; u < gUnits; u++) {
+        if (p.unitCoord[u] != gUnitCoord[u] || (gTexGen && p.gen[u] != xfReg[0x40 + gUnitCoord[u]])) {
+            return false;
+        }
+    }
+    const u8* v = (const u8*) vertices;
+    const u32 paV = osConvertVirtToPhys(v);
+    const u32 paR = p.rest ? osConvertVirtToPhys(gRest) - headBytes(d) : 0;
+    C3D_BufInfo& b = gAttrFastBuf;
+    BufInfo_Init(&b);
+    if (!paV || (p.rest && paR + headBytes(d) == 0)) {
+        return false;
+    }
+    for (int i = 0; i < p.bufCount; i++) {
+        const u32 pa = (p.bufRest[i] ? paR : paV) + p.bufFrom[i];
+        if (pa < b.base_paddr) {
+            return false;
+        }
+        b.buffers[i].offset = pa - b.base_paddr;
+        b.buffers[i].flags[0] = p.bufFlags0[i];
+        b.buffers[i].flags[1] = p.bufFlags1[i];
+    }
+    b.bufCount = p.bufCount;
+    for (int u = 0; u < gUnits; u++) {
+        const int c = gUnitCoord[u];
+        const u32 m = c < 3 ? d.matrices[0] >> (8 * (c + 1)) : c < 7 ? d.matrices[1] >> (8 * (c - 3)) : d.matrices[2];
+        const int row = gTexGen ? (int) ((m & 0xFF) < 62 ? m & 0xFF : 62) : 60;
+        setTexMatrix(u, row, p.fromPos[u] || p.fromNrm[u], xfMem);
+        gTexRow[u] = row;
+        gTexProj[u] = gTexGen && (p.gen[u] & 2) && p.fromPos[u] && row < 60;
+    }
+    gTexDiv = p.texDiv;
+    gTexFromNrm[0] = p.fromNrm[0];
+    gTexFromNrm[1] = p.fromNrm[1];
+    gTexFromNrm[2] = p.fromNrm[2];
+    if (!p.normal) {
+        setFixed(gNormalAttr, 0.0f, 0.0f, 1.0f, 0.0f);
+    }
+    if (!p.matrix) {
+        setFixed(gMatrixAttr, (float) (d.matrices[0] & 0xFF), 0.0f, 0.0f, 0.0f);
+    }
+    for (int u = 0; u < 3; u++) {
+        if (!p.again[u] && !p.tc[u]) {
+            setFixed(gTexAttr[u], 0.0f, 0.0f, 0.0f, 1.0f);
+        }
+    }
+    if (bind) {
+        bindBufInfo(b);
+    }
+    return true;
+}
+
+bool setAttributes(const Re4GxDraw& d, const void* vertices, bool vertexColor, bool lit, const uint32_t* xfMem,
+                   const uint32_t* xfReg)
+{
+    if (gAttrFast == 1 && attrFast(d, vertices, vertexColor, lit, xfMem, xfReg, true)) {
+        gAttrFastDraws++;
+        return true;
+    }
+    if (gAttrFast == 2 && attrFast(d, vertices, vertexColor, lit, xfMem, xfReg, false)) {
+        gAttrFastDraws++;
+        int row[3] = {gTexRow[0], gTexRow[1], gTexRow[2]};
+        bool proj[3] = {gTexProj[0], gTexProj[1], gTexProj[2]};
+        gAttrChecking = true;
+        gAttrRecN = 0;
+        const bool ok = setAttributesSlow(d, vertices, vertexColor, lit, xfMem, xfReg);
+        gAttrChecking = false;
+        bool same = ok;
+        for (int u = 0; u < gUnits; u++) {
+            same &= row[u] == gTexRow[u] && proj[u] == gTexProj[u];
+        }
+        if (!same) {
+            if (gAttrMismatch < 8) {
+                re4_log("3ds: attributes fast: rows or projection differ (slow way %s)", ok ? "drawn" : "failed");
+            }
+            gAttrMismatch++;
+        }
+        return ok;
+    }
+    gAttrSlowDraws++;
+    AttrPlan& in = gPlanIn;
+    in.layout = d.layout;
+    in.stride = d.stride;
+    in.vertexColor = vertexColor;
+    in.lit = lit;
+    in.rest = gRest != nullptr;
+    in.texGen = gTexGen;
+    in.units = gUnits;
+    for (int u = 0; u < 3; u++) {
+        in.unitCoord[u] = u < gUnits ? gUnitCoord[u] : -1;
+        in.gen[u] = u < gUnits && gTexGen ? xfReg[0x40 + gUnitCoord[u]] : 0;
+    }
+    gAttrV = (const u8*) vertices;
+    gAttrRestBase = gRest ? gRest - headBytes(d) : nullptr;
+    gAttrRecN = 0;
+    if (!setAttributesSlow(d, vertices, vertexColor, lit, xfMem, xfReg)) {
+        gPlan.valid = false;
+        return false;
+    }
     return true;
 }
 
@@ -5110,6 +5430,7 @@ void frame(uint32_t xfb, uint32_t width, uint32_t height)
         frameEnd();
     }
     gInFrame = false;
+    gOccCopied = false;  // (occlusion cull)
     gWaterLive = false;  // (the water's copy read in its picture only)
     gWaterRefract = false;  // (2026-11-18)
     gRefractPending = 0;
@@ -5310,6 +5631,9 @@ extern "C" int re4_3ds_gx_init(void)
     if (const char* drawOwn = getenv("RE4_3DS_DRAWOWN")) {
         gDrawOwnFrom = (u32) atoi(drawOwn);
     }
+    if (const char* attrFastEnv = getenv("RE4_3DS_ATTRFAST")) {  // (2026-11-19)
+        gAttrFast = (u32) atoi(attrFastEnv);
+    }
     if (const char* fold = getenv("RE4_3DS_TEVFOLD")) {  // (stage 6.8)
         gTevFoldOn = *fold != '0';
     }
@@ -5325,6 +5649,20 @@ extern "C" int re4_3ds_gx_init(void)
     if (const char* water = getenv("RE4_3DS_WATER")) {  // (the water's copy)
         gWaterOn = *water != '0';
     }
+    if (const char* occ = getenv("RE4_3DS_OCC")) {  // (occlusion cull)
+        gOccOn = atoi(occ);
+    }
+    if (const char* at = getenv("RE4_3DS_OCC_COPYAT")) {
+        gOccCopyAt = (int) strtol(at, nullptr, 0);
+    }
+    for (int b = 0; b < 2 && gOccOn; b++) {
+        gOccBuf[b] = (u8*) linearMemAlign(240 * 400 * 4, 0x80);
+        gOccOn = gOccBuf[b] != nullptr;
+    }
+    re4_occ_on = gOccOn;
+    re4_log("3ds: occlusion cull %s (RE4_3DS_OCC; the depth before table %d)",
+            gOccOn ? "on" : getenv("RE4_3DS_OCC") && !atoi(getenv("RE4_3DS_OCC")) ? "off" : "off (no linear memory)",
+            gOccCopyAt);
     if (const char* texRender = getenv("RE4_3DS_TEXRENDER")) {  // (R4)
         gTexRenderOn = *texRender != '0';
     }
@@ -5629,6 +5967,15 @@ extern "C" void re4_3ds_gx_frame(int log)
     }
     const double f = gStats.frames;
     struct mallinfo mi = mallinfo();
+    if (gOccOn) {  // (occlusion cull)
+        re4_log("3ds: occlusion cull (GX thread): per picture %.2f depth copies, %.2f built (%.3f ms each), %.2f "
+                "without room in the queue; %u kernel invalidates failed",
+                gOccCopies / f, gOccBuilds / f,
+                gOccBuilds ? (double) gOccBuildTicks / CPU_TICKS_PER_MSEC / gOccBuilds : 0.0, gOccNoQueue / f,
+                gOccSvcFail);
+        gOccCopies = gOccBuilds = gOccNoQueue = gOccSvcFail = 0;
+        gOccBuildTicks = 0;
+    }
     re4_log("3ds: GX renderer: %lu pictures, per picture %.0f draws (%.0f skipped, %.0f without texture), %.0f vertices, "
             "%.1f splits, %.2f ms to end, %.1f TEV stages approximated; textures %u kept, %u made, %u failed, %u dropped, "
             "VRAM free %lu KB; C heap in use %u KB, linear free %lu KB (the largest piece %lu KB); the display list "
@@ -5681,6 +6028,10 @@ extern "C" void re4_3ds_gx_frame(int log)
             gStats.flushes / f, gStats.flushTicks / ms,
             gStats.flushes ? gStats.flushTicks / (double) CPU_TICKS_PER_MSEC / gStats.flushes : 0.0,
             gStats.flushMax / (double) CPU_TICKS_PER_MSEC, (unsigned long) __ctru_linear_heap_size >> 10);
+    re4_log("3ds: attributes fast (RE4_3DS_ATTRFAST %u): per picture %.1f by the plan, %.1f the slow way, %.1f plans "
+            "not made; %lu differences from the slow way in all", (unsigned) gAttrFast, gAttrFastDraws / f,
+            gAttrSlowDraws / f, gAttrPlanFail / f, (unsigned long) gAttrMismatch);
+    gAttrFastDraws = gAttrSlowDraws = gAttrPlanFail = 0;
     re4_log("3ds: GX lights per picture: %.0f lit draws, %.2f lights a lit draw (%.2f the whole way, %.2f far), %.0f with another "
             "light function (drawn as diffuse clamped, spot), %.0f left out (a position matrix beyond row %d); "
             "vertices %.0f lit, %.0f with a coordinate over w, by units read 0/1/2/3: %.0f/%.0f/%.0f/%.0f",
@@ -5845,4 +6196,333 @@ extern "C" void re4_3ds_texmiss_flush(void)
     if (gMissFile) {
         fflush(gMissFile);
     }
+}
+
+// (occlusion cull, 2026-11-20; docs/22-occlusion.md) The game's side: runtime/part_cull.cpp re4_info_cull asks for
+// each info of a model without bones inside the view (re4_occ_info), include/re4_part_cull.h gives the camera
+// (re4_occ_view), part_cull.cpp frame() the frame (re4_occ_frame); the game's thread
+extern "C" {
+int re4_occ_on;
+volatile int re4_occ_sparse;  // little hidden for a while: the GX thread copies the depth every 8th picture only
+extern int re4_occ_table;  // runtime/gx_owner.cpp: the table of the entry drawn now, -1 outside one
+}
+
+namespace {
+
+struct OccView {
+    u32 tag;
+    bool ok;
+    float v[3][4];  // the frame's camera (world -> eye)
+};
+OccView gOccV[8];  // the last frames' cameras, by the frame's number
+OccHiz gOccH;      // the newest depth
+bool gOccHave, gOccViewSame, gOccTOk, gOccCalm;
+u32 gOccSeen, gOccTag, gOccTFor;
+float gOccT[3][4];  // this frame's eye -> that picture's eye
+float gOccP[4][4];  // this frame's eye -> that picture's screen clip (gOccH.m * gOccT)
+u32 gOccFrameTested, gOccFrameLeft, gOccSparseFrames;
+float gOccShare = 1.0f;  // the share of the parts tested left out, smoothed over frames
+int gOccMargin = 16;
+float gOccTurnMax = 4.0f, gOccMoveMax = 500.0f;
+u32 gOccLeftParts, gOccLeftInfos, gOccCalmNot, gOccTested;
+u64 gOccGameTicks;
+
+void occMul(const float a[3][4], const float b[3][4], float o[3][4])
+{
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 4; c++) {
+            o[r][c] = a[r][0] * b[0][c] + a[r][1] * b[1][c] + a[r][2] * b[2][c] + (c == 3 ? a[r][3] : 0.0f);
+        }
+    }
+}
+
+bool occInv(const float a[3][4], float o[3][4])
+{
+    const float c00 = a[1][1] * a[2][2] - a[1][2] * a[2][1], c01 = a[1][2] * a[2][0] - a[1][0] * a[2][2],
+                c02 = a[1][0] * a[2][1] - a[1][1] * a[2][0];
+    const float det = a[0][0] * c00 + a[0][1] * c01 + a[0][2] * c02;
+    if (!(fabsf(det) > 1e-12f)) {
+        return false;
+    }
+    const float k = 1.0f / det;
+    o[0][0] = c00 * k;
+    o[0][1] = (a[0][2] * a[2][1] - a[0][1] * a[2][2]) * k;
+    o[0][2] = (a[0][1] * a[1][2] - a[0][2] * a[1][1]) * k;
+    o[1][0] = c01 * k;
+    o[1][1] = (a[0][0] * a[2][2] - a[0][2] * a[2][0]) * k;
+    o[1][2] = (a[0][2] * a[1][0] - a[0][0] * a[1][2]) * k;
+    o[2][0] = c02 * k;
+    o[2][1] = (a[0][1] * a[2][0] - a[0][0] * a[2][1]) * k;
+    o[2][2] = (a[0][0] * a[1][1] - a[0][1] * a[1][0]) * k;
+    for (int r = 0; r < 3; r++) {
+        o[r][3] = -(o[r][0] * a[0][3] + o[r][1] * a[1][3] + o[r][2] * a[2][3]);
+    }
+    return true;
+}
+
+// The camera calm from view a to view b: the view axis turned at most gOccTurnMax degrees, the eye moved at most
+// gOccMoveMax (a cut or the aim's camera: no cull - bench8, the late ones came in those)
+bool occCalm(const float a[3][4], const float b[3][4])
+{
+    float d = a[2][0] * b[2][0] + a[2][1] * b[2][1] + a[2][2] * b[2][2];
+    d = d > 1.0f ? 1.0f : d < -1.0f ? -1.0f : d;
+    if (acosf(d) * 57.29578f > gOccTurnMax) {
+        return false;
+    }
+    float m2 = 0.0f;
+    for (int j = 0; j < 3; j++) {
+        const float ea = -(a[0][j] * a[0][3] + a[1][j] * a[1][3] + a[2][j] * a[2][3]);
+        const float eb = -(b[0][j] * b[0][3] + b[1][j] * b[1][3] + b[2][j] * b[2][3]);
+        m2 += (ea - eb) * (ea - eb);
+    }
+    return m2 <= gOccMoveMax * gOccMoveMax;
+}
+
+inline int occClamp(int v, int lo, int hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+// The box (centre c, half size h) through P (-> the depth's picture's screen clip): its nearest point beyond the
+// farthest distance of every tile under its rectangle on that screen, with the margin around it. The corners from
+// the centre and the three half axes (4 products, not 8)
+bool occHidden(const OccHiz& z, const float P[4][4], const float c[3], const float h[3])
+{
+    float qc[4], ax[4], ay[4], az[4];
+    for (int r = 0; r < 4; r++) {
+        qc[r] = P[r][0] * c[0] + P[r][1] * c[1] + P[r][2] * c[2] + P[r][3];
+        ax[r] = P[r][0] * h[0];
+        ay[r] = P[r][1] * h[1];
+        az[r] = P[r][2] * h[2];
+    }
+    // the nearest w first: across the eye's plane - not known
+    const float nearest = qc[3] - fabsf(ax[3]) - fabsf(ay[3]) - fabsf(az[3]);
+    if (!(nearest > 1.0f)) {
+        return false;
+    }
+    float x0 = 1e30f, x1 = -1e30f, y0 = 1e30f, y1 = -1e30f;
+    for (int k = 0; k < 8; k++) {
+        const float sx = (k & 1) ? 1.0f : -1.0f, sy = (k & 2) ? 1.0f : -1.0f, sz = (k & 4) ? 1.0f : -1.0f;
+        const float qx = qc[0] + sx * ax[0] + sy * ay[0] + sz * az[0];
+        const float qy = qc[1] + sx * ax[1] + sy * ay[1] + sz * az[1];
+        const float qw = qc[3] + sx * ax[3] + sy * ay[3] + sz * az[3];
+        const float iw = 1.0f / qw;
+        const float px = (qx * iw + 1.0f) * 200.0f, py = (1.0f - qy * iw) * 120.0f;
+        x0 = px < x0 ? px : x0;
+        x1 = px > x1 ? px : x1;
+        y0 = py < y0 ? py : y0;
+        y1 = py > y1 ? py : y1;
+    }
+    if (x1 < 0.0f || x0 >= 400.0f || y1 < 0.0f || y0 >= 240.0f) {
+        return false;  // off that picture: not known
+    }
+    const int m = gOccMargin;
+    const int a0 = occClamp((int) floorf(x0) - m, 0, 399), a1 = occClamp((int) ceilf(x1) + m, 0, 399);
+    const int b0 = occClamp((int) floorf(y0) - m, 0, 239), b1 = occClamp((int) ceilf(y1) + m, 0, 239);
+    const int r0 = a0 >> 3, r1 = a1 >> 3, c0 = (239 - b1) >> 3, c1 = (239 - b0) >> 3;
+    for (int r = r0; r <= r1; r++) {
+        for (int col = c0; col <= c1; col++) {
+            if (!(z.tile[r][col] < nearest)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
+// The camera of the info asked next (include/re4_part_cull.h re4InfoCulled): the frame's camera is the one at the
+// first info of the world's tables (6 .. 0x12)
+extern "C" void re4_occ_view(const float (*v)[4])
+{
+    const int t = re4_occ_table;
+    OccView& F = gOccV[gOccTag & 7];
+    if (!F.ok && t >= 6 && t < 0x13) {
+        memcpy(F.v, v, sizeof(F.v));
+        F.ok = true;
+    }
+    gOccViewSame = F.ok && memcmp(F.v, v, sizeof(F.v)) == 0;
+}
+
+// 1: the info (its box: centre c, half size h, through mv) is hidden behind the depth of an older picture
+extern "C" int re4_occ_info(const float mv[3][4], const float c[3], const float h[3], unsigned parts)
+{
+    const int t = re4_occ_table;
+    if (t < 0 || t >= 0x13 || !gOccViewSame || !gOccHave || gOccH.scale == 0.0f || gOccTag - gOccH.tag > 6) {
+        return 0;
+    }
+    const u64 from = svcGetSystemTick();
+    if (gOccTFor != gOccTag) {  // (once a frame: this camera against that picture's)
+        gOccTFor = gOccTag;
+        const OccView& F = gOccV[gOccTag & 7];
+        const OccView& O = gOccV[gOccH.tag & 7];
+        float inv[3][4];
+        gOccTOk = O.tag == gOccH.tag && O.ok && occInv(F.v, inv);
+        gOccCalm = gOccTOk && occCalm(O.v, F.v);
+        if (gOccTOk) {
+            occMul(O.v, inv, gOccT);
+            for (int r = 0; r < 4; r++) {
+                for (int c4 = 0; c4 < 4; c4++) {
+                    gOccP[r][c4] = gOccH.m[r][0] * gOccT[0][c4] + gOccH.m[r][1] * gOccT[1][c4] +
+                                   gOccH.m[r][2] * gOccT[2][c4] + (c4 == 3 ? gOccH.m[r][3] : 0.0f);
+                }
+            }
+        }
+    }
+    int hidden = 0;
+    if (!gOccCalm) {
+        gOccCalmNot += gOccTOk ? parts : 0;
+    } else {
+        float P[4][4];  // the info's model -> that picture's screen clip
+        for (int r = 0; r < 4; r++) {
+            for (int c4 = 0; c4 < 4; c4++) {
+                P[r][c4] = gOccP[r][0] * mv[0][c4] + gOccP[r][1] * mv[1][c4] + gOccP[r][2] * mv[2][c4] +
+                           (c4 == 3 ? gOccP[r][3] : 0.0f);
+            }
+        }
+        hidden = occHidden(gOccH, P, c, h);
+        gOccTested += parts;
+        gOccLeftParts += hidden ? parts : 0;
+        gOccLeftInfos += hidden;
+        gOccFrameTested += parts;
+        gOccFrameLeft += hidden ? parts : 0;
+    }
+    gOccGameTicks += svcGetSystemTick() - from;
+    return hidden;
+}
+
+// The game's frame f begins (runtime/part_cull.cpp frame()): the pictures from here carry f, the newest depth taken
+extern "C" void re4_occ_frame(unsigned f)
+{
+    if (!re4_occ_on) {
+        return;
+    }
+    static bool told;
+    if (!told) {
+        told = true;
+        if (const char* v = getenv("RE4_3DS_OCC_MARGIN")) {
+            gOccMargin = occClamp(atoi(v), 0, 64);
+        }
+        if (const char* v = getenv("RE4_3DS_OCC_TURN")) {
+            gOccTurnMax = (float) atof(v);
+        }
+        if (const char* v = getenv("RE4_3DS_OCC_MOVE")) {
+            gOccMoveMax = (float) atof(v);
+        }
+        re4_log("3ds: occlusion cull: margin %d px, not when the camera turned more than %.1f deg or moved more than "
+                "%.0f since the depth's picture (RE4_3DS_OCC_MARGIN, _TURN, _MOVE)",
+                gOccMargin, gOccTurnMax, gOccMoveMax);
+    }
+    // (sparse) the share left out over the frames tested: under 5 % the depth every 8th picture only (the copy and
+    // its tiles ≈ 2 ms of the GX thread, the tests ≈ 1 ms of this one - more than the cull gives in the open), over 8 %
+    // every picture again
+    if (gOccFrameTested) {
+        gOccShare = gOccShare * 0.9f + 0.1f * (float) gOccFrameLeft / (float) gOccFrameTested;
+        re4_occ_sparse = gOccShare < 0.05f ? 1 : gOccShare > 0.08f ? 0 : re4_occ_sparse;
+    }
+    gOccSparseFrames += re4_occ_sparse != 0;
+    gOccFrameTested = gOccFrameLeft = 0;
+    gOccTag = f;
+    OccView& F = gOccV[f & 7];
+    F.tag = f;
+    F.ok = false;
+    gOccViewSame = false;
+    if (re4_gxq_on) {
+        re4_gxq_fn(occTagFn, f, 0);
+    } else {
+        occTagFn(f, 0);  // (the renderer on this thread)
+    }
+    {
+        std::lock_guard<std::mutex> lock(gOccLock);
+        if (gOccPub.seq != gOccSeen) {
+            gOccSeen = gOccPub.seq;
+            gOccH = gOccPub;
+            gOccHave = true;
+            gOccTFor = ~0u;
+        }
+    }
+    if (f && f % 300 == 0) {
+        const double n = 300.0;
+        re4_log("3ds: occlusion cull (game, frame %u, 300 frames): per frame %.1f parts tested, %.1f left out (%.1f "
+                "infos), %.1f not tested (the camera turned or moved); %.3f ms on the game's thread; sparse (a depth "
+                "every 8th picture) %u frames",
+                f, gOccTested / n, gOccLeftParts / n, gOccLeftInfos / n, gOccCalmNot / n,
+                (double) gOccGameTicks / CPU_TICKS_PER_MSEC / n, gOccSparseFrames);
+        gOccTested = gOccLeftParts = gOccLeftInfos = gOccCalmNot = gOccSparseFrames = 0;
+        gOccGameTicks = 0;
+    }
+}
+
+// (occlusion cull, models: patch 0338) A model of table 13 (enemies, Leon, Ashley: game/trans_ot.cpp
+// AddOtModelPosRadius) left out when its sphere (world centre, radius) is behind the room in the newest depth: the
+// cube around it through that picture's camera (gOccV) and projection, as an info's box. view: this frame's camera
+namespace {
+int gOccModels = -1;  // RE4_3DS_OCC_MODELS
+u32 gOccSphSeq = ~0u, gOccSphFor = ~0u, gOccSphLogged;
+bool gOccSphOk, gOccSphCalm;
+float gOccSphP[4][4];   // world -> that picture's screen clip
+float gOccSphOV[3][4];  // that picture's camera
+float gOccSphV[3][4];   // the camera the calm was found for
+u32 gOccSphTested, gOccSphLeft, gOccSphNotCalm;
+u64 gOccSphTicks;
+}  // namespace
+
+extern "C" int re4_occ_sphere3(const float* pos, float radius, const float (*v)[4])
+{
+    if (gOccModels < 0) {
+        const char* e = getenv("RE4_3DS_OCC_MODELS");
+        gOccModels = e ? atoi(e) : 1;
+        re4_log("3ds: occlusion cull of the models (table 13: enemies, Leon, Ashley) %s (RE4_3DS_OCC_MODELS)",
+                gOccModels ? "on" : "off");
+    }
+    if (gOccSphLogged != gOccTag && gOccTag % 300 == 0 && gOccTag) {
+        gOccSphLogged = gOccTag;
+        const double n = 300.0;
+        re4_log("3ds: occlusion cull (models, frame %u, 300 frames): per frame %.1f tested, %.1f left out, %.1f not "
+                "tested (the camera turned or moved); %.3f ms",
+                gOccTag, gOccSphTested / n, gOccSphLeft / n, gOccSphNotCalm / n,
+                (double) gOccSphTicks / CPU_TICKS_PER_MSEC / n);
+        gOccSphTested = gOccSphLeft = gOccSphNotCalm = 0;
+        gOccSphTicks = 0;
+    }
+    if (!gOccModels || !gOccHave || gOccH.scale == 0.0f || gOccTag - gOccH.tag > 6) {
+        return 0;
+    }
+    const u64 from = svcGetSystemTick();
+    if (gOccSphSeq != gOccH.seq) {  // (a new depth: its camera -> its screen)
+        gOccSphSeq = gOccH.seq;
+        gOccSphFor = ~0u;
+        const OccView& O = gOccV[gOccH.tag & 7];
+        gOccSphOk = O.tag == gOccH.tag && O.ok;
+        if (gOccSphOk) {
+            memcpy(gOccSphOV, O.v, sizeof(gOccSphOV));
+            for (int r = 0; r < 4; r++) {
+                for (int c = 0; c < 4; c++) {
+                    gOccSphP[r][c] = gOccH.m[r][0] * O.v[0][c] + gOccH.m[r][1] * O.v[1][c] +
+                                     gOccH.m[r][2] * O.v[2][c] + (c == 3 ? gOccH.m[r][3] : 0.0f);
+                }
+            }
+        }
+    }
+    int hidden = 0;
+    if (gOccSphOk) {
+        if (gOccSphFor != gOccTag || memcmp(gOccSphV, v, sizeof(gOccSphV)) != 0) {
+            gOccSphFor = gOccTag;
+            memcpy(gOccSphV, v, sizeof(gOccSphV));
+            gOccSphCalm = occCalm(gOccSphOV, v);
+        }
+        if (!gOccSphCalm) {
+            gOccSphNotCalm++;
+        } else {
+            const float h[3] = {radius, radius, radius};
+            hidden = occHidden(gOccH, gOccSphP, pos, h);
+            gOccSphTested++;
+            gOccSphLeft += hidden;
+            gOccFrameTested += 4;  // (the sparse mode's share: a model as 4 parts)
+            gOccFrameLeft += hidden ? 4 : 0;
+        }
+    }
+    gOccSphTicks += svcGetSystemTick() - from;
+    return hidden;
 }

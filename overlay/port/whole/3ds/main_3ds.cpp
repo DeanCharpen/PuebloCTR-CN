@@ -332,6 +332,36 @@ void speedupReport()
 
 }  // namespace
 
+// (stream read-ahead, runtime/dvd.cpp) The block after a sound stream's refill is read here, on core 1 like the
+// log's writer, not by the game's thread inside its audio frame (8-11 ms of the SD card about every 0.8 s).
+// Without a thread on core 1: as before. RE4_DVD_AHEAD=0: off.
+extern "C" void re4_dvd_ahead_start(void (*wake)(void));
+extern "C" void re4_dvd_ahead_work(void);
+static LightEvent gAheadEvent;
+
+static void aheadWake(void)
+{
+    LightEvent_Signal(&gAheadEvent);
+}
+
+static void aheadReader(void*)
+{
+    for (;;) {
+        LightEvent_Wait(&gAheadEvent);
+        re4_dvd_ahead_work();
+    }
+}
+
+static void startAheadReader()
+{
+    LightEvent_Init(&gAheadEvent, RESET_ONESHOT);
+    if (threadCreate(aheadReader, nullptr, 32 * 1024, 0x30, 1, true)) {
+        re4_dvd_ahead_start(aheadWake);
+    } else {
+        re4_log("3ds: no thread on core 1 for the stream read-ahead: the game's thread reads as before");
+    }
+}
+
 int main(void)
 {
     gfxInitDefault();
@@ -378,6 +408,7 @@ int main(void)
     if (log) {
         startLogWriter();
     }
+    startAheadReader();
     re4_set_data_dir(getenv("RE4_DATA_DIR"));
     // as re4_host_main: the address checks know the image (RE4_IS_ADDR) before the game runs
     re4_check_game_address("re4.3dsx", (const void*) &re4_game_main);

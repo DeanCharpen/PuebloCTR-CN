@@ -28,6 +28,10 @@ int re4_part_out(unsigned i);
 /* game/trans.cpp commonModelTrans (patch 0162): an info of `d` drawn through `mv` */
 #if defined(__cplusplus) && defined(MODEL_H)
 extern "C" void GXGetProjectionv(float* ptr);
+#if defined(__3DS__)
+extern "C" int re4_occ_on; /* (occlusion cull, 3ds/gx_3ds.cpp) */
+extern "C" void re4_occ_view(const float (*v)[4]);
+#endif
 static inline int re4InfoCulled(cModelData* d, float mv[3][4])
 {
     float proj[7];
@@ -35,6 +39,11 @@ static inline int re4InfoCulled(cModelData* d, float mv[3][4])
     if (!re4_part_cull_on) {
         return 0;
     }
+#if defined(__3DS__)
+    if (re4_occ_on) {
+        re4_occ_view(pG->Camera.v_mat); /* (occlusion cull) the info's camera */
+    }
+#endif
     GXGetProjectionv(proj);
     return re4_info_cull(d->pParts, d->displist_num, (const short*) d->vtxOrig, d->nVtx, d->shift,
                          (d->flags & 0x80000000) ? 8 : 6, mv, proj);

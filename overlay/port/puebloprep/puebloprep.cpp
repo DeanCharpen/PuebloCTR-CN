@@ -14,7 +14,8 @@
 //
 // Editions (the same rule as runtime/dvd.cpp and the start's check, 3ds/startcheck_3ds.cpp): G4BP08 the European
 // release, G4BE08 with the file system table elsewhere than 0x28FE00 the US release - both played by the beta;
-// G4BE08 with the table at 0x28FE00 the debug build, G4BJ08 the Japanese release, anything else - refused.
+// G4BJ08 the Japanese release - played too (stage 69, 2026-11-21); G4BE08 with the table at 0x28FE00 the debug
+// build, anything else - refused.
 //
 // Images: plain GameCube ones (.iso / .gcm, 1 459 978 240 bytes) and RVZ (Dolphin; through a temporary plain image in
 // the system's temporary folder). Windows, macOS, Linux (std::filesystem; ffmpeg through the shell). Nothing of the game
@@ -331,12 +332,12 @@ void describe(const Image& im)
         title, im.files.size(), im.fileBytes / 1048576.0);
 }
 
-// The beta plays the European and the US release, both discs of one edition, each disc once.
+// The beta plays the European, the US and the Japanese release, both discs of one edition, each disc once.
 void checkPair(const std::vector<Image>& ims)
 {
     for (const Image& im : ims) {
-        if (im.edition == kJp || im.edition == kDebug || im.edition == kUnknown) {
-            fail("%s: the %s is not played by this beta (the European and the US release are)", im.path.c_str(),
+        if (im.edition == kDebug || im.edition == kUnknown) {
+            fail("%s: the %s is not played by this beta (the European, the US and the Japanese release are)", im.path.c_str(),
                  kEditionName[im.edition]);
         }
         if (im.discNo != 0 && im.discNo != 1) {
@@ -1131,9 +1132,11 @@ int cardImport(const std::string& path, bool replace)
         g.erase(g.begin(), g.begin() + 0x110);                           // of its own, then the .gci
         say("gci: %s: a .gcs - the .gci inside", path.c_str());
     }
-    if (g.size() >= 4 && memcmp(g.data(), "G4BP", 4) == 0) {  // the European game's: the port's id is G4BE
+    if (g.size() >= 4 && (memcmp(g.data(), "G4BP", 4) == 0 || memcmp(g.data(), "G4BJ", 4) == 0)) {  // the European
+        const bool jp = g[3] == 'J';                                // or the Japanese game's: the port's id is G4BE
         memcpy(g.data(), "G4BE", 4);
-        say("gci: %s: a file of the European game (G4BP), taken as G4BE (the port's id)", path.c_str());
+        say("gci: %s: a file of the %s game (%s), taken as G4BE (the port's id)", path.c_str(), jp ? "Japanese" : "European",
+            jp ? "G4BJ" : "G4BP");
     }
     if (!replace && g.size() >= 64 && memcmp(&g[8], "bh4_data", 8) == 0) {  // a save's slot taken: the first free one
         Re4CardFile files[127];                                                // of the game's 20 (bh4_data00..19)

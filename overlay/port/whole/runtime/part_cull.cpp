@@ -218,9 +218,19 @@ int classify(const Box& b)
     return inside ? 0 : 2;
 }
 
+#if defined(__3DS__)
+// (occlusion cull) 3ds/gx_3ds.cpp, the end
+extern "C" void re4_occ_frame(unsigned f);
+extern "C" int re4_occ_info(const float mv[3][4], const float c[3], const float h[3], unsigned parts);
+extern "C" int re4_occ_on;
+#endif
+
 void frame(unsigned f)
 {
     gFrame = f;
+#if defined(__3DS__)
+    re4_occ_frame(f);
+#endif
     if (f && f % 300 == 0 && gInfos) {
         const double n = 300.0;
         re4_log("part cull (per frame, 300 frames; from frame %u): %.1f infos asked, %.1f left out, %.1f wholly in "
@@ -307,6 +317,11 @@ extern "C" int re4_info_cull(const void* parts, unsigned count, const short* pos
         }
         const Box& all = m->boxes[m->count];
         result = all.ok ? classify(all) : 2;
+#if defined(__3DS__)
+        if (re4_occ_on && result != 1 && all.ok && re4_occ_info(mv, all.c, all.h, count)) {
+            result = 1;  // (occlusion cull) hidden behind the room in an older picture's depth
+        }
+#endif
         gInfosOut += result == 1;
         gInfosIn += result == 0;
         gParts = m->boxes;
@@ -348,4 +363,21 @@ extern "C" int re4_part_out(unsigned i)
     const int out = b.ok && classify(b) == 1;
     gPartsOut += out;
     return out;
+}
+
+// (occlusion cull, models: patch 0338, game/trans_ot.cpp AddOtModelPosRadius) 1: the model's sphere is behind the
+// room in an older picture's depth - left out like one outside the view; the 3DS's in 3ds/gx_3ds.cpp, elsewhere 0
+#if defined(__3DS__)
+extern "C" int re4_occ_sphere3(const float* pos, float radius, const float (*view)[4]);
+#endif
+extern "C" int re4_occ_sphere(const float* pos, float radius, const float (*view)[4])
+{
+#if defined(__3DS__)
+    return re4_occ_on ? re4_occ_sphere3(pos, radius, view) : 0;
+#else
+    (void) pos;
+    (void) radius;
+    (void) view;
+    return 0;
+#endif
 }
