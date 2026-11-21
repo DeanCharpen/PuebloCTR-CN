@@ -81,11 +81,11 @@ diff -ruN a/src/game/pl_wep.cpp b/src/game/pl_wep.cpp
                  pl->ang.y -= spd * (f32) Joy[0].stickX * repCtr * PI / 10.0f / 200.0f / 20.0f;
              }
          }
-+        /* port (patch 0333, stage 6.2f): the console's gyro on top of the stick, guns only */
++        /* port (patch 0333, stage 6.2f): the console's gyro on top of the stick, guns and the knife (stage 70) */
 +        {
 +            f32 gyroYaw;
 +            f32 gyroPitch;
-+            if (joyKamae() && re4_gyro_take(&gyroYaw, &gyroPitch)) {
++            if ((joyKamae() || joyLKamae()) && re4_gyro_take(&gyroYaw, &gyroPitch)) {
 +                m3r += gyroPitch * (4.0f / PI);
 +                m3r.limit(-1.0f, 1.0f);
 +                d = pl->m_Fwork0 + gyroYaw;

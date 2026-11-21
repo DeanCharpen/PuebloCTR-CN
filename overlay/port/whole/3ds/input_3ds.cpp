@@ -501,7 +501,7 @@ void readPad(unsigned frame)
     pad.triggerL = (pad.buttons & kL) ? 0xFF : 0;
     pad.triggerR = (pad.buttons & kR) ? 0xFF : 0;
     re4_pad_live(&pad);
-    gyroRead(frame, (pad.buttons & kR) != 0);  // (the aim: the game's R, wherever the mapping put it)
+    gyroRead(frame, (pad.buttons & (kR | kL)) != 0);  // (the aim: the game's R, or L - the knife; wherever the mapping put them)
 }
 
 }  // namespace

@@ -21,7 +21,7 @@ everything the port needs from images of your discs.
 
 ## Features
 
-- **Gyro aiming**: while you hold R to aim, turning the console moves the aim too - fine adjustments without the
+- **Gyro aiming**: while you hold R to aim (or L to ready the knife), turning the console moves the aim too - fine adjustments without the
   Circle Pad. On by default at 2x; the strength (1x to 4x) or off is chosen on the settings screen.
 - **The whole bottom screen is used** during play:
   - the health of both characters with live heartbeat lines, the ammo of the current weapon and the money;
@@ -194,7 +194,7 @@ CONTROLS and SCREEN; tap a tab to open it and a row to change it:
 
 - **CHEATS**: infinite health, infinite ammo, one-hit kills, automatic button prompts (QTEs), +1,000,000 pesetas once;
 - **CONTROLS**:
-  - **Gyro aim** (on at 2x by default): while you hold R to aim, turning the console turns the aim too; the arrows set
+  - **Gyro aim** (on at 2x by default): while you hold R to aim (or L to ready the knife), turning the console turns the aim too; the arrows set
     how strongly, down to off;
   - **Circle Pad sensitivity** (1x by default): how far the Circle Pad has to be pushed. The game was made for the
     GameCube's long stick and wants about half of the pad's way before the character moves; if you have to push the
