@@ -1,11 +1,14 @@
 // Stage 9 (2026-11-08, the project owner's wish: "the bottom screen looks like Minecraft - it's a horror game"; their choice of
 // the mockups: "B - the dark"): the game's bottom screen drawn from pictures made on the Mac (3ds/ui_assets.h by
 // tools/ui_assets.py): the background by one copy, the text as coverage blended in its colour (every string
-// in en fr de es it ja - Noto Serif JP, one face for all; ru until R0 2026-11-12), the numbers by glyphs, the heartbeats coloured by the life.
+// in en fr de es it ja chs - Noto Serif JP for the first six, Noto Serif SC for the Chinese; ru until R0 2026-11-12),
+// the numbers by glyphs, the heartbeats coloured by the life.
 // By the panel's thread (settings_3ds.cpp drawGame -> re4_ui_game; the CPU, no GPU), into its picture of the screen.
 //
-// The language: RE4_3DS_LANG=en|fr|de|es|it|ja, else the game's own (pSys->language, runtime/cheats.cpp hudSample:
-// 0 ja, 1/2/7 en, 3 de, 4 fr, 5 es, 6 it). RE4_3DS_UI=0 - the look of before (stage 8).
+// The language: RE4_3DS_LANG=en|fr|de|es|it|ja|chs, else the game's own (pSys->language, runtime/cheats.cpp hudSample:
+// 0 ja, 1/2/7 en, 3 de, 4 fr, 5 es, 6 it). chs (simplified Chinese) is the port's own: the discs have no Chinese, so it
+// comes from the system's language (3ds/main_3ds.cpp systemLanguage sets RE4_3DS_LANG) or from pueblo.cfg. RE4_3DS_UI=0 -
+// the look of before (stage 8).
 // Also the minimap's text (3ds/minimap_3ds.cpp): re4_ui_text, re4_ui_tpl, within re4_ui_clip.
 // R2 (2026-11-12): the settings before the gameplay (3ds/setup_3ds.cpp) - re4_ui_setup.
 #include <3ds.h>
@@ -95,7 +98,7 @@ int lang()
     static int env = -2;
     if (env == -2) {
         env = -1;
-        static const char* const kCodes[UI_LANGS] = {"en", "fr", "de", "es", "it", "ja"};
+        static const char* const kCodes[UI_LANGS] = {"en", "fr", "de", "es", "it", "ja", "chs"};
         if (const char* v = getenv("RE4_3DS_LANG")) {
             for (int i = 0; i < UI_LANGS; i++) {
                 if (!strncmp(v, kCodes[i], 2)) {
@@ -119,6 +122,7 @@ int lang()
     case 6:
         return UI_LANG_IT;
     }
+    // (7 is the second English of the discs - include/card.h; Chinese is never pSys->language: the env above only)
     return UI_LANG_EN;
 }
 

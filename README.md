@@ -38,7 +38,7 @@ everything the port needs from images of your discs.
   animation work on separate CPU cores at 804 MHz, a texture pack prepared for the 3DS GPU for smoother loading.
 - **European, US and Japanese discs**; the European ones in five languages (English, French, German, Spanish, Italian -
   taken from the console's system language), the Japanese ones in Japanese, with the gore of the US release; the bottom
-  screen follows the game's language.
+  screen follows the game's language, in simplified Chinese on a console set to it.
 - **Your saves**: bring GameCube saves from Dolphin or a memory card (`.gci` / `.gcs`) with PuebloPrep.
 - **Easy setup**: PuebloPrep (Windows, macOS, Linux) makes everything from your own disc images - ISO, GCM or Dolphin's
   RVZ - in one go; install as a CIA (HOME Menu icon and banner) or a `.3dsx`.
@@ -188,6 +188,11 @@ under [Troubleshooting](#troubleshooting).
 any other language gives English). To play in another one, change the system language in System Settings before
 starting. The US discs are in English, the Japanese ones in Japanese. The Japanese discs play with the gore of the
 US release (the original Japanese release cut it).
+
+**The bottom screen's text** follows the game's language too, and has a seventh one the discs do not: simplified
+Chinese, on a console whose system language is Chinese (the game itself stays English then - the discs have no
+Chinese text). To ask for it elsewhere, put `RE4_3DS_LANG=chs` in `sdmc:/3ds/pueblo/pueblo.cfg` (`en`, `fr`, `de`,
+`es`, `it`, `ja` work the same way); `RE4_3DS_LANG` in the environment overrides both.
 
 **The settings screen** is on the bottom screen while the game is at its title. It has three tabs - CHEATS,
 CONTROLS and SCREEN; tap a tab to open it and a row to change it:
@@ -341,7 +346,7 @@ tools/make_tree.py               submodule + overlay + patch -> build/tree
 tools/minimap_gen.py             the map screen's rules, read from the game's source at build time
 tools/ui_assets.py               the bottom screen's pictures and strings -> overlay/.../3ds/ui_assets.h (committed)
 tools/cia_assets.py              the icon, the banner and its sound -> overlay/port/whole/3ds/cia/ (committed)
-tools/fetch_fonts.sh             the Noto Serif JP faces those two draw with (only needed to change them)
+tools/fetch_fonts.sh             the Noto Serif JP and SC faces those two draw with (only needed to change them)
 ```
 
 `tools/build.sh` makes `build/tree` first; to change the port, edit the tree, then carry the change back into

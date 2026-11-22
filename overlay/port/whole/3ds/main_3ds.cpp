@@ -215,18 +215,25 @@ __attribute__((constructor(101))) void readSettings()
 // (R4) The European discs' language (runtime/game_language.cpp reads RE4_GAME_LANGUAGE) from the system's language
 // when pueblo.cfg sets none: German, French, Spanish, Italian, else English (the GameCube's setLanguage does the same
 // from OSGetLanguage). After readSettings (priority 101); the US discs ignore it.
+// A simplified Chinese system also gets the bottom screen's Chinese strings (RE4_3DS_LANG=chs, 3ds/ui_bottom_3ds.cpp):
+// the game's own text has no Chinese - only the port's screens do.
 const char* gLanguageFrom = "pueblo.cfg";
 __attribute__((constructor(102))) void systemLanguage()
 {
-    if (getenv("RE4_GAME_LANGUAGE")) {
-        return;
-    }
     u8 lang = CFG_LANGUAGE_EN;
     if (R_SUCCEEDED(cfguInit())) {
         if (R_FAILED(CFGU_GetSystemLanguage(&lang))) {
             lang = CFG_LANGUAGE_EN;
         }
         cfguExit();
+    }
+    // (the bottom screen: a simplified Chinese system gets its Chinese strings - the discs have no Chinese, only the
+    // port's screens do; pueblo.cfg's RE4_3DS_LANG, read before this, keeps the last word)
+    if (lang == CFG_LANGUAGE_ZH && !getenv("RE4_3DS_LANG")) {
+        setenv("RE4_3DS_LANG", "chs", 1);
+    }
+    if (getenv("RE4_GAME_LANGUAGE")) {
+        return;
     }
     const char* v = lang == CFG_LANGUAGE_DE ? "ger" : lang == CFG_LANGUAGE_FR ? "fra" : lang == CFG_LANGUAGE_ES ? "esp"
                   : lang == CFG_LANGUAGE_IT ? "ita" : "eng";
