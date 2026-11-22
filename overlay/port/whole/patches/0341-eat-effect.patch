@@ -1,0 +1,15 @@
+# EspSetEatEffect: for the per-weapon hit effects (types 2, 4-7) `eff1 == EFF_NONE` was tested before getWepEff set
+# it (the original read it unset). Clang folded the test to true: only the log line, no hit effect, no hit sound. eff1
+# starts at 0 (the test is on info, as on the GC). The same line.
+diff -ruN a/src/game/est.cpp b/src/game/est.cpp
+--- a/src/game/est.cpp	2026-11-22 20:50:02.584501662 +0900
++++ b/src/game/est.cpp	2026-11-22 20:50:04.533310409 +0900
+@@ -358,7 +358,7 @@
+ {
+     AtEffInfo* info = EatMgr.getEffInfo(type);
+     Vec rot;
+-    u32 eff1;
++    u32 eff1 = 0;  /* port (0341): read unset below (== EFF_NONE before getWepEff); clang then never set the effect */
+     u32 eff2;
+     f32 len;
+ 

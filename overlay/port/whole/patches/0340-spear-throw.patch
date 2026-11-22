@@ -1,0 +1,16 @@
+# cObjSpear::setThrow: with a speed given, the spear's tilt came from `d`, set only on the other branch (the
+# original read it unset). LLVM 22 took that undefined read to mean the branch never runs and dropped it: every
+# harpoon of the Del Lago fight flew along its own axis at 1000, not at the sight at 2000. `d` now takes the speed.
+# The same line.
+diff -ruN a/src/game/obj1b.cpp b/src/game/obj1b.cpp
+--- a/src/game/obj1b.cpp	2026-11-22 19:09:33.419347090 +0900
++++ b/src/game/obj1b.cpp	2026-11-22 19:09:33.711746092 +0900
+@@ -712,7 +712,7 @@
+     if (pSpd) {
+         w->throw_v.x = pSpd->x;
+         w->throw_v.y = pSpd->y;
+-        w->throw_v.z = pSpd->z;
++        w->throw_v.z = pSpd->z; d = *pSpd;  /* port (0340): d was read unset here; LLVM then dropped this branch */
+     } else {
+         d.x = 0.0f;
+         d.y = 0.0f;
