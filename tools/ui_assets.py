@@ -50,136 +50,139 @@ L = dict(
 )
 
 # (the strings below keep a seventh, Russian text: left out of the screen - zip drops it)
-LANGS = ['en', 'fr', 'de', 'es', 'it', 'ja']
+LANGS = ['en', 'fr', 'de', 'es', 'it', 'ja', 'cn']
 
 # the strings: (name, font, size, letter spacing, {lang: text}); one text for all when a str
 STRINGS = [
-    ('LEON', SERIF, 10, 2, ['LEON'] * 5 + ['レオン', 'ЛЕОН']),
-    ('ASHLEY', SERIF, 10, 2, ['ASHLEY'] * 5 + ['アシュリー', 'ЭШЛИ']),
-    ('AMMO', SERIF_R, 8, 2, ['AMMO', 'MUNITIONS', 'MUNITION', 'MUNICIÓN', 'MUNIZIONI', '弾薬', 'ПАТРОНЫ']),
-    ('PTAS', SERIF_R, 8, 2, ['PESETAS', 'PESETAS', 'PESETEN', 'PESETAS', 'PESETAS', 'ペセタ', 'ПЕСЕТЫ']),
-    ('CASE', SERIF, 13, 3, ['CASE', 'MALLETTE', 'KOFFER', 'MALETÍN', 'VALIGETTA', 'アタッシュケース', 'КЕЙС']),
-    ('MAP', SERIF, 13, 3, ['MAP', 'CARTE', 'KARTE', 'MAPA', 'MAPPA', 'マップ', 'КАРТА']),
-    ('AREA', SERIF_R, 8, 2, ['AREA', 'ZONE', 'GEBIET', 'ZONA', 'ZONA', 'エリア', 'ОБЛАСТЬ']),
-    ('ROOM', SERIF_R, 8, 2, ['ROOM', 'SALLE', 'RAUM', 'SALA', 'STANZA', '部屋', 'КОМНАТА']),
+    ('LEON', SERIF, 10, 2, ['LEON'] * 5 + ['レオン', '里昂', 'ЛЕОН']),
+    ('ASHLEY', SERIF, 10, 2, ['ASHLEY'] * 5 + ['アシュリー', '艾什莉', 'ЭШЛИ']),
+    ('AMMO', SERIF_R, 8, 2, ['AMMO', 'MUNITIONS', 'MUNITION', 'MUNICIÓN', 'MUNIZIONI', '弾薬', '弹药', 'ПАТРОНЫ']),
+    ('PTAS', SERIF_R, 8, 2, ['PESETAS', 'PESETAS', 'PESETEN', 'PESETAS', 'PESETAS', 'ペセタ', '比塞塔', 'ПЕСЕТЫ']),
+    ('CASE', SERIF, 13, 3, ['CASE', 'MALLETTE', 'KOFFER', 'MALETÍN', 'VALIGETTA', 'アタッシュケース', '手提箱', 'КЕЙС']),
+    ('MAP', SERIF, 13, 3, ['MAP', 'CARTE', 'KARTE', 'MAPA', 'MAPPA', 'マップ', '地图', 'КАРТА']),
+    ('AREA', SERIF_R, 8, 2, ['AREA', 'ZONE', 'GEBIET', 'ZONA', 'ZONA', 'エリア', '区域', 'ОБЛАСТЬ']),
+    ('ROOM', SERIF_R, 8, 2, ['ROOM', 'SALLE', 'RAUM', 'SALA', 'STANZA', '部屋', '房间', 'КОМНАТА']),
     ('X2', SERIF_R, 9, 1, '×2'),
     ('X4', SERIF_R, 9, 1, '×4'),
     ('OFFMAP', SERIF_R, 10, 0, ['outside the area map', 'hors de la carte', 'außerhalb der Karte', 'fuera del mapa',
-                                'fuori dalla mappa', 'マップの範囲外', 'вне карты области']),
+                                'fuori dalla mappa', 'マップの範囲外', '区域地图之外', 'вне карты области']),
     ('NOMAP', SERIF_R, 11, 1, ['no map', 'pas de carte', 'keine Karte', 'sin mapa', 'nessuna mappa', 'マップなし',
-                               'карта недоступна']),
+                               '无地图', 'карта недоступна']),
     ('BADGE_S', SERIF_B, 9, 0, 'S'),       # (the minimap's typewriters)
     ('BADGE_D', SERIF_B, 8, 0, 'M'),       # (its merchant: M as on the game's map; 8 px: 9 fills the box)
     # the settings before the
     # gameplay (3ds/setup_3ds.cpp, drawn by re4_ui_setup)
-    ('S_TITLE', SERIF, 13, 3, ['SETTINGS', 'RÉGLAGES', 'EINSTELLUNGEN', 'AJUSTES', 'IMPOSTAZIONI', '設定']),
+    ('S_TITLE', SERIF, 13, 3, ['SETTINGS', 'RÉGLAGES', 'EINSTELLUNGEN', 'AJUSTES', 'IMPOSTAZIONI', '設定', '设置']),
     ('S_VERSION', SERIF_R, 8, 1, 'PuebloCTR β1'),
-    ('S_CHEATS', SERIF_R, 8, 2, ['CHEATS', 'TRICHES', 'CHEATS', 'TRUCOS', 'TRUCCHI', 'チート']),
-    ('S_GAME', SERIF_R, 8, 2, ['GAME', 'JEU', 'SPIEL', 'JUEGO', 'GIOCO', 'ゲーム']),
+    ('S_CHEATS', SERIF_R, 8, 2, ['CHEATS', 'TRICHES', 'CHEATS', 'TRUCOS', 'TRUCCHI', 'チート', '作弊']),
+    ('S_GAME', SERIF_R, 8, 2, ['GAME', 'JEU', 'SPIEL', 'JUEGO', 'GIOCO', 'ゲーム', '游戏']),
     ('S_HEALTH', SERIF_R, 11, 0, ['Infinite health', 'Santé infinie', 'Unendliche Gesundheit', 'Salud infinita',
-                                  'Salute infinita', '体力無限']),
+                                  'Salute infinita', '体力無限', '无限生命值']),
     ('S_AMMO', SERIF_R, 11, 0, ['Infinite ammo', 'Munitions infinies', 'Unendliche Munition', 'Munición infinita',
-                                'Munizioni infinite', '弾薬無限']),
+                                'Munizioni infinite', '弾薬無限', '无限弹药']),
     ('S_ONEHIT', SERIF_R, 11, 0, ['One-hit kills', 'Ennemis en un coup', 'Gegner mit einem Treffer',
-                                  'Enemigos de un golpe', 'Nemici con un colpo', '一撃で倒す']),
+                                  'Enemigos de un golpe', 'Nemici con un colpo', '一撃で倒す', '一击必杀']),
     ('S_QTE', SERIF_R, 11, 0, ['Automatic QTEs', 'QTE automatiques', 'QTEs automatisch', 'QTE automáticos',
-                               'QTE automatici', 'QTE自動']),
+                               'QTE automatici', 'QTE自動', '自动QTE']),
     ('S_MONEY', SERIF_R, 11, 0, ['+1,000,000 pesetas', '+1 000 000 pesetas', '+1.000.000 Peseten',
-                                 '+1.000.000 pesetas', '+1.000.000 pesetas', '+1,000,000ペセタ']),
+                                 '+1.000.000 pesetas', '+1.000.000 pesetas', '+1,000,000ペセタ', '+1,000,000比塞塔']),
     # (the aim may be on any button: no "(hold R)")
     ('S_GYRO', SERIF_R, 11, 0, ['Gyro aim', 'Visée gyroscopique', 'Zielen mit Gyroskop', 'Apuntar con giroscopio',
-                                'Mira con giroscopio', 'ジャイロ照準']),
+                                'Mira con giroscopio', 'ジャイロ照準', '陀螺仪瞄准']),
     ('S_FPS', SERIF_R, 11, 0, ['Frame counter', 'Images par seconde', 'Bilder pro Sekunde', 'Contador de FPS',
-                               'Contatore FPS', 'フレームレート表示']),
-    ('S_OFF', SERIF_R, 9, 1, ['OFF', 'NON', 'AUS', 'NO', 'NO', 'オフ']),
+                               'Contatore FPS', 'フレームレート表示', '帧率显示']),
+    ('S_OFF', SERIF_R, 9, 1, ['OFF', 'NON', 'AUS', 'NO', 'NO', 'オフ', '关']),
     ('S_FOOT', SERIF_R, 9, 0, ['Applied when a game starts or loads', "Appliqué au début ou au chargement d'une partie",
                                'Gilt ab Spielbeginn oder Laden eines Spielstands',
                                'Se aplica al empezar o cargar una partida',
-                               "Si applica all'avvio o al caricamento di una partita", 'ゲーム開始・ロード時に反映']),
+                               "Si applica all'avvio o al caricamento di una partita", 'ゲーム開始・ロード時に反映',
+                               '开始游戏或加载存档时生效']),
     # the gyro's gains (the decimal mark of the language)
     ('S_G10', SERIF, 11, 0, '1×'),
-    ('S_G15', SERIF, 11, 0, ['1.5×', '1,5×', '1,5×', '1,5×', '1,5×', '1.5×']),
+    ('S_G15', SERIF, 11, 0, ['1.5×', '1,5×', '1,5×', '1,5×', '1,5×', '1.5×', '1.5×']),
     ('S_G20', SERIF, 11, 0, '2×'),
-    ('S_G25', SERIF, 11, 0, ['2.5×', '2,5×', '2,5×', '2,5×', '2,5×', '2.5×']),
+    ('S_G25', SERIF, 11, 0, ['2.5×', '2,5×', '2,5×', '2,5×', '2,5×', '2.5×', '2.5×']),
     ('S_G30', SERIF, 11, 0, '3×'),
     ('S_G40', SERIF, 11, 0, '4×'),
     # the circle pad's sensitivity (3ds/input_3ds.cpp re4_3ds_stick_set): its row and the gain between 1× and 1.5×
     ('S_STICK', SERIF_R, 11, 0, ['Circle Pad sensitivity', 'Sensibilité du pad circulaire', 'Schiebepad-Empfindlichkeit',
-                                 'Sensibilidad del botón deslizante', 'Sensibilità del pad scorrevole', 'スライドパッド感度']),
-    ('S_G12', SERIF, 11, 0, ['1.25×', '1,25×', '1,25×', '1,25×', '1,25×', '1.25×']),
+                                 'Sensibilidad del botón deslizante', 'Sensibilità del pad scorrevole', 'スライドパッド感度',
+                                 '左摇杆灵敏度']),
+    ('S_G12', SERIF, 11, 0, ['1.25×', '1,25×', '1,25×', '1,25×', '1,25×', '1.25×', '1.25×']),
     # the picture on the top screen (3ds/gx_3ds.cpp re4_3ds_gx_fill; a player's wish: no bars): the game's
     # 16:9 band fitted (as before), stretched to the screen's height, or zoomed to it (the sides cut)
-    ('S_PICTURE', SERIF_R, 11, 0, ['Picture', 'Image', 'Bild', 'Imagen', 'Immagine', '画面']),
-    ('S_FIT', SERIF, 10, 0, ['Fit', 'Ajustée', 'Passend', 'Ajustada', 'Adattata', '標準']),
-    ('S_STRETCH', SERIF, 10, 0, ['Stretch', 'Étirée', 'Gestreckt', 'Estirada', 'Allungata', '引き伸ばし']),
-    ('S_ZOOM', SERIF, 10, 0, ['Zoom', 'Zoom', 'Zoom', 'Zoom', 'Zoom', 'ズーム']),
+    ('S_PICTURE', SERIF_R, 11, 0, ['Picture', 'Image', 'Bild', 'Imagen', 'Immagine', '画面', '画面']),
+    ('S_FIT', SERIF, 10, 0, ['Fit', 'Ajustée', 'Passend', 'Ajustada', 'Adattata', '標準', '适应']),
+    ('S_STRETCH', SERIF, 10, 0, ['Stretch', 'Étirée', 'Gestreckt', 'Estirada', 'Allungata', '引き伸ばし', '拉伸']),
+    ('S_ZOOM', SERIF, 10, 0, ['Zoom', 'Zoom', 'Zoom', 'Zoom', 'Zoom', 'ズーム', '放大']),
     # the settings screen's tabs
-    ('S_TAB_CHEATS', SERIF_R, 10, 2, ['CHEATS', 'TRICHES', 'CHEATS', 'TRUCOS', 'TRUCCHI', 'チート']),
-    ('S_TAB_CONTROLS', SERIF_R, 10, 2, ['CONTROLS', 'COMMANDES', 'STEUERUNG', 'CONTROLES', 'COMANDI', '操作']),
-    ('S_TAB_SCREEN', SERIF_R, 10, 2, ['SCREEN', 'ÉCRAN', 'BILDSCHIRM', 'PANTALLA', 'SCHERMO', '画面']),
+    ('S_TAB_CHEATS', SERIF_R, 10, 2, ['CHEATS', 'TRICHES', 'CHEATS', 'TRUCOS', 'TRUCCHI', 'チート', '作弊']),
+    ('S_TAB_CONTROLS', SERIF_R, 10, 2, ['CONTROLS', 'COMMANDES', 'STEUERUNG', 'CONTROLES', 'COMANDI', '操作', '操作']),
+    ('S_TAB_SCREEN', SERIF_R, 10, 2, ['SCREEN', 'ÉCRAN', 'BILDSCHIRM', 'PANTALLA', 'SCHERMO', '画面', '画面']),
     # the button mapping (3ds/controls_3ds.cpp): its row on the CONTROLS tab, its page
     # (the game's actions, their buttons), the buttons' names (the same in every language)
     ('S_BUTTONS', SERIF_R, 11, 0, ['Button mapping', 'Attribution des boutons', 'Tastenbelegung',
-                                   'Asignación de botones', 'Mappatura dei pulsanti', 'ボタン配置']),
+                                   'Asignación de botones', 'Mappatura dei pulsanti', 'ボタン配置', '按键分配']),
     # the Circle Pad's dead zone (a worn pad's drift ignored): its row; the value a percent (the digits) or OFF
     ('S_DEADZONE', SERIF_R, 11, 0, ['Circle Pad dead zone', 'Zone morte du pad circulaire', 'Schiebepad-Totzone',
                                     'Zona muerta del botón deslizante', 'Zona morta del pad scorrevole',
-                                    'スライドパッドの遊び']),
-    ('S_BTN_TITLE', SERIF, 13, 3, ['BUTTONS', 'BOUTONS', 'TASTEN', 'BOTONES', 'PULSANTI', 'ボタン配置']),
+                                    'スライドパッドの遊び', '左摇杆死区']),
+    ('S_BTN_TITLE', SERIF, 13, 3, ['BUTTONS', 'BOUTONS', 'TASTEN', 'BOTONES', 'PULSANTI', 'ボタン配置', '按键']),
     ('A_UP', SERIF_R, 11, 0, ['Forward / aim up', 'Avancer / viser en haut', 'Vorwärts / nach oben zielen',
-                              'Avanzar / apuntar arriba', 'Avanti / mira in alto', '前進・上を狙う']),
+                              'Avanzar / apuntar arriba', 'Avanti / mira in alto', '前進・上を狙う', '前进 / 向上瞄准']),
     ('A_DOWN', SERIF_R, 11, 0, ['Back / aim down', 'Reculer / viser en bas', 'Rückwärts / nach unten zielen',
-                                'Retroceder / apuntar abajo', 'Indietro / mira in basso', '後退・下を狙う']),
+                                'Retroceder / apuntar abajo', 'Indietro / mira in basso', '後退・下を狙う', '后退 / 向下瞄准']),
     ('A_LEFT', SERIF_R, 11, 0, ['Turn / aim left', 'Tourner / viser à gauche', 'Links drehen / zielen',
-                                'Girar / apuntar a la izq.', 'Gira / mira a sinistra', '左を向く・狙う']),
+                                'Girar / apuntar a la izq.', 'Gira / mira a sinistra', '左を向く・狙う', '左转 / 向左瞄准']),
     ('A_RIGHT', SERIF_R, 11, 0, ['Turn / aim right', 'Tourner / viser à droite', 'Rechts drehen / zielen',
-                                 'Girar / apuntar a la der.', 'Gira / mira a destra', '右を向く・狙う']),
+                                 'Girar / apuntar a la der.', 'Gira / mira a destra', '右を向く・狙う', '右转 / 向右瞄准']),
     ('A_LUP', SERIF_R, 11, 0, ['Look up / zoom in', 'Regarder en haut / zoom +', 'Nach oben sehen / Zoom +',
-                               'Mirar arriba / zoom +', 'Guarda su / zoom +', '上を見る・ズーム＋']),
+                               'Mirar arriba / zoom +', 'Guarda su / zoom +', '上を見る・ズーム＋', '向上看 / 放大']),
     ('A_LDOWN', SERIF_R, 11, 0, ['Look down / zoom out', 'Regarder en bas / zoom −', 'Nach unten sehen / Zoom −',
-                                 'Mirar abajo / zoom −', 'Guarda giù / zoom −', '下を見る・ズーム－']),
+                                 'Mirar abajo / zoom −', 'Guarda giù / zoom −', '下を見る・ズーム－', '向下看 / 缩小']),
     ('A_LLEFT', SERIF_R, 11, 0, ['Look left', 'Regarder à gauche', 'Nach links sehen', 'Mirar a la izquierda',
-                                 'Guarda a sinistra', '左を見る']),
+                                 'Guarda a sinistra', '左を見る', '向左看']),
     ('A_LRIGHT', SERIF_R, 11, 0, ['Look right', 'Regarder à droite', 'Nach rechts sehen', 'Mirar a la derecha',
-                                  'Guarda a destra', '右を見る']),
-    ('A_ACTION', SERIF_R, 11, 0, ['Action', 'Action', 'Aktion', 'Acción', 'Azione', 'アクション']),
-    ('A_RUN', SERIF_R, 11, 0, ['Run', 'Courir', 'Rennen', 'Correr', 'Correre', '走る']),
+                                  'Guarda a destra', '右を見る', '向右看']),
+    ('A_ACTION', SERIF_R, 11, 0, ['Action', 'Action', 'Aktion', 'Acción', 'Azione', 'アクション', '互动']),
+    ('A_RUN', SERIF_R, 11, 0, ['Run', 'Courir', 'Rennen', 'Correr', 'Correre', '走る', '奔跑']),
     ('A_TURN', SERIF_R, 11, 0, ['Quick turn', 'Demi-tour rapide', 'Schnelle Drehung', 'Giro rápido', 'Giro rapido',
-                                'クイックターン']),
-    ('A_AIM', SERIF_R, 11, 0, ['Aim', 'Viser', 'Zielen', 'Apuntar', 'Mirare', '構える']),
-    ('A_FIRE', SERIF_R, 11, 0, ['Fire', 'Tirer', 'Schießen', 'Disparar', 'Sparare', '撃つ']),
-    ('A_RELOAD', SERIF_R, 11, 0, ['Reload', 'Recharger', 'Nachladen', 'Recargar', 'Ricaricare', 'リロード']),
-    ('A_KNIFE', SERIF_R, 11, 0, ['Knife', 'Couteau', 'Messer', 'Cuchillo', 'Coltello', 'ナイフ']),
+                                'クイックターン', '快速转向']),
+    ('A_AIM', SERIF_R, 11, 0, ['Aim', 'Viser', 'Zielen', 'Apuntar', 'Mirare', '構える', '瞄准']),
+    ('A_FIRE', SERIF_R, 11, 0, ['Fire', 'Tirer', 'Schießen', 'Disparar', 'Sparare', '撃つ', '射击']),
+    ('A_RELOAD', SERIF_R, 11, 0, ['Reload', 'Recharger', 'Nachladen', 'Recargar', 'Ricaricare', 'リロード', '装填']),
+    ('A_KNIFE', SERIF_R, 11, 0, ['Knife', 'Couteau', 'Messer', 'Cuchillo', 'Coltello', 'ナイフ', '小刀']),
     ('A_SLASH', SERIF_R, 11, 0, ['Knife attack', 'Coup de couteau', 'Messerangriff', 'Cuchillada',
-                                 'Colpo di coltello', 'ナイフ攻撃']),
-    ('A_ASHLEY', SERIF_R, 11, 0, ['Ashley', 'Ashley', 'Ashley', 'Ashley', 'Ashley', 'アシュリー']),
-    ('A_CASE', SERIF_R, 11, 0, ['Attaché case', 'Mallette', 'Koffer', 'Maletín', 'Valigetta', 'アタッシュケース']),
-    ('A_MAP', SERIF_R, 11, 0, ['Map', 'Carte', 'Karte', 'Mapa', 'Mappa', 'マップ']),
-    ('A_OPTIONS', SERIF_R, 11, 0, ['Options', 'Options', 'Optionen', 'Opciones', 'Opzioni', 'オプション']),
+                                 'Colpo di coltello', 'ナイフ攻撃', '小刀攻击']),
+    ('A_ASHLEY', SERIF_R, 11, 0, ['Ashley', 'Ashley', 'Ashley', 'Ashley', 'Ashley', 'アシュリー', '艾什莉']),
+    ('A_CASE', SERIF_R, 11, 0, ['Attaché case', 'Mallette', 'Koffer', 'Maletín', 'Valigetta', 'アタッシュケース', '手提箱']),
+    ('A_MAP', SERIF_R, 11, 0, ['Map', 'Carte', 'Karte', 'Mapa', 'Mappa', 'マップ', '地图']),
+    ('A_OPTIONS', SERIF_R, 11, 0, ['Options', 'Options', 'Optionen', 'Opciones', 'Opzioni', 'オプション', '选项']),
     ('S_RESET', SERIF_R, 11, 0, ['Reset to defaults', 'Rétablir par défaut', 'Standard wiederherstellen',
-                                 'Restablecer', 'Ripristina predefiniti', '初期設定に戻す']),
+                                 'Restablecer', 'Ripristina predefiniti', '初期設定に戻す', '恢复默认设置']),
     ('S_PRESS', SERIF, 10, 0, ['Press a button…', 'Appuyez sur un bouton…', 'Taste drücken…', 'Pulsa un botón…',
-                               'Premi un pulsante…', 'ボタンを押す…']),
+                               'Premi un pulsante…', 'ボタンを押す…', '按下按键…']),
     ('S_BTN_FOOT', SERIF_R, 9, 0, ['Tap, then press one button or two · SELECT: none',
                                    'Touchez, puis 1 ou 2 boutons · SELECT : aucun',
                                    'Antippen, dann 1 oder 2 Tasten · SELECT: keine',
                                    'Toca y pulsa 1 o 2 botones · SELECT: ninguno',
                                    'Tocca, poi 1 o 2 pulsanti · SELECT: nessuno',
-                                   'タッチ→ボタンを1つか2つ・SELECTで解除']),
+                                   'タッチ→ボタンを1つか2つ・SELECTで解除',
+                                   '点按后按1个或2个键 · SELECT: 无']),
     ('K_A', SERIF, 11, 0, 'A'), ('K_B', SERIF, 11, 0, 'B'), ('K_X', SERIF, 11, 0, 'X'), ('K_Y', SERIF, 11, 0, 'Y'),
     ('K_L', SERIF, 11, 0, 'L'), ('K_R', SERIF, 11, 0, 'R'), ('K_ZL', SERIF, 11, 0, 'ZL'), ('K_ZR', SERIF, 11, 0, 'ZR'),
     ('K_UP', SERIF, 11, 0, '↑'), ('K_DOWN', SERIF, 11, 0, '↓'), ('K_LEFT', SERIF, 11, 0, '←'),
     ('K_RIGHT', SERIF, 11, 0, '→'), ('K_START', SERIF, 10, 1, 'START'), ('K_PLUS', SERIF_R, 11, 0, ' + '),
     ('K_NONE', SERIF_R, 11, 0, '—'),
     # the sticks' directions by the names the 3DS's manuals give them (a player tells the two apart)
-    ('K_PUP', SERIF, 10, 0, ['Circle Pad ↑', 'Pad circ. ↑', 'Schiebepad ↑', 'Desliz. ↑', 'Pad scorr. ↑', 'スライドパッド↑']),
-    ('K_PDOWN', SERIF, 10, 0, ['Circle Pad ↓', 'Pad circ. ↓', 'Schiebepad ↓', 'Desliz. ↓', 'Pad scorr. ↓', 'スライドパッド↓']),
-    ('K_PLEFT', SERIF, 10, 0, ['Circle Pad ←', 'Pad circ. ←', 'Schiebepad ←', 'Desliz. ←', 'Pad scorr. ←', 'スライドパッド←']),
-    ('K_PRIGHT', SERIF, 10, 0, ['Circle Pad →', 'Pad circ. →', 'Schiebepad →', 'Desliz. →', 'Pad scorr. →', 'スライドパッド→']),
-    ('K_CUP', SERIF, 10, 0, ['C-Stick ↑', 'Stick C ↑', 'C-Stick ↑', 'Palanca C ↑', 'Stick C ↑', 'Cスティック↑']),
-    ('K_CDOWN', SERIF, 10, 0, ['C-Stick ↓', 'Stick C ↓', 'C-Stick ↓', 'Palanca C ↓', 'Stick C ↓', 'Cスティック↓']),
-    ('K_CLEFT', SERIF, 10, 0, ['C-Stick ←', 'Stick C ←', 'C-Stick ←', 'Palanca C ←', 'Stick C ←', 'Cスティック←']),
-    ('K_CRIGHT', SERIF, 10, 0, ['C-Stick →', 'Stick C →', 'C-Stick →', 'Palanca C →', 'Stick C →', 'Cスティック→']),
+    ('K_PUP', SERIF, 10, 0, ['Circle Pad ↑', 'Pad circ. ↑', 'Schiebepad ↑', 'Desliz. ↑', 'Pad scorr. ↑', 'スライドパッド↑', '左摇杆↑']),
+    ('K_PDOWN', SERIF, 10, 0, ['Circle Pad ↓', 'Pad circ. ↓', 'Schiebepad ↓', 'Desliz. ↓', 'Pad scorr. ↓', 'スライドパッド↓', '左摇杆↓']),
+    ('K_PLEFT', SERIF, 10, 0, ['Circle Pad ←', 'Pad circ. ←', 'Schiebepad ←', 'Desliz. ←', 'Pad scorr. ←', 'スライドパッド←', '左摇杆←']),
+    ('K_PRIGHT', SERIF, 10, 0, ['Circle Pad →', 'Pad circ. →', 'Schiebepad →', 'Desliz. →', 'Pad scorr. →', 'スライドパッド→', '左摇杆→']),
+    ('K_CUP', SERIF, 10, 0, ['C-Stick ↑', 'Stick C ↑', 'C-Stick ↑', 'Palanca C ↑', 'Stick C ↑', 'Cスティック↑', 'C摇杆↑']),
+    ('K_CDOWN', SERIF, 10, 0, ['C-Stick ↓', 'Stick C ↓', 'C-Stick ↓', 'Palanca C ↓', 'Stick C ↓', 'Cスティック↓', 'C摇杆↓']),
+    ('K_CLEFT', SERIF, 10, 0, ['C-Stick ←', 'Stick C ←', 'C-Stick ←', 'Palanca C ←', 'Stick C ←', 'Cスティック←', 'C摇杆←']),
+    ('K_CRIGHT', SERIF, 10, 0, ['C-Stick →', 'Stick C →', 'C-Stick →', 'Palanca C →', 'Stick C →', 'Cスティック→', 'C摇杆→']),
     # (English only - the game's language is not known yet) the checks
     # at the start (3ds/startcheck_3ds.cpp, drawn by re4_ui_check). C_T_* the titles, C_F_* the footers, C_H_* the
     # headings of a problem, the rest its lines
@@ -222,9 +225,9 @@ STRINGS = [
 # templates: {0} {1} the arguments (in the style DS_SMALL); the pieces in the same face
 TEMPLATES = [
     ('FLOOR', ['floor {0} of {1}', 'étage {0} sur {1}', 'Etage {0} von {1}', 'planta {0} de {1}', 'piano {0} di {1}',
-               '{0}階 / {1}', 'этаж {0} из {1}']),
+               '{0}階 / {1}', '{0}层 / {1}', 'этаж {0} из {1}']),
     ('MEDALS', ['medallions {0}/{1}', 'médaillons {0}/{1}', 'Medaillons {0}/{1}', 'medallones {0}/{1}',
-                'medaglioni {0}/{1}', '青いメダル {0}/{1}', 'медальоны {0}/{1}']),
+                'medaglioni {0}/{1}', '青いメダル {0}/{1}', '蓝色徽章 {0}/{1}', 'медальоны {0}/{1}']),
 ]
 TPL_FONT, TPL_SIZE = SERIF_R, 10
 DIGITS = '0123456789/ -—×%'
@@ -265,11 +268,11 @@ def add_piece(text, fname, size, spacing):
 
 
 def lang_size(lang, size):
-    return max(size, 10) if lang == 'ja' else size  # (kana and kanji below 10 px do not read)
+    return max(size, 10) if lang in ('ja', 'cn') else size  # (kana and kanji below 10 px do not read)
 
 
 def lang_spacing(lang, spacing):
-    return min(spacing, 1) if lang == 'ja' else spacing
+    return min(spacing, 1) if lang in ('ja', 'cn') else spacing
 
 
 str_idx = {}  # name -> [piece per language]
