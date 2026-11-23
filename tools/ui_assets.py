@@ -62,7 +62,7 @@ LANGS = ['en', 'fr', 'de', 'es', 'it', 'ja', 'chs']
 # the strings: (name, font, size, letter spacing, {lang: text}); one text for all when a str
 STRINGS = [
     ('LEON', SERIF, 10, 2, ['LEON'] * 5 + ['レオン', '里昂', 'ЛЕОН']),
-    ('ASHLEY', SERIF, 10, 2, ['ASHLEY'] * 5 + ['アシュリー', '艾什莉', 'ЭШЛИ']),
+    ('ASHLEY', SERIF, 10, 2, ['ASHLEY'] * 5 + ['アシュリー', '阿什莉', 'ЭШЛИ']),
     ('AMMO', SERIF_R, 8, 2, ['AMMO', 'MUNITIONS', 'MUNITION', 'MUNICIÓN', 'MUNIZIONI', '弾薬', '弹药', 'ПАТРОНЫ']),
     ('PTAS', SERIF_R, 8, 2, ['PESETAS', 'PESETAS', 'PESETEN', 'PESETAS', 'PESETAS', 'ペセタ', '比塞塔', 'ПЕСЕТЫ']),
     ('CASE', SERIF, 13, 3, ['CASE', 'MALLETTE', 'KOFFER', 'MALETÍN', 'VALIGETTA', 'アタッシュケース', '手提箱', 'КЕЙС']),
@@ -161,7 +161,7 @@ STRINGS = [
     ('A_KNIFE', SERIF_R, 11, 0, ['Knife', 'Couteau', 'Messer', 'Cuchillo', 'Coltello', 'ナイフ', '小刀']),
     ('A_SLASH', SERIF_R, 11, 0, ['Knife attack', 'Coup de couteau', 'Messerangriff', 'Cuchillada',
                                  'Colpo di coltello', 'ナイフ攻撃', '小刀攻击']),
-    ('A_ASHLEY', SERIF_R, 11, 0, ['Ashley', 'Ashley', 'Ashley', 'Ashley', 'Ashley', 'アシュリー', '艾什莉']),
+    ('A_ASHLEY', SERIF_R, 11, 0, ['Ashley', 'Ashley', 'Ashley', 'Ashley', 'Ashley', 'アシュリー', '阿什莉']),
     ('A_CASE', SERIF_R, 11, 0, ['Attaché case', 'Mallette', 'Koffer', 'Maletín', 'Valigetta', 'アタッシュケース', '手提箱']),
     ('A_MAP', SERIF_R, 11, 0, ['Map', 'Carte', 'Karte', 'Mapa', 'Mappa', 'マップ', '地图']),
     ('A_OPTIONS', SERIF_R, 11, 0, ['Options', 'Options', 'Optionen', 'Opciones', 'Opzioni', 'オプション', '选项']),
