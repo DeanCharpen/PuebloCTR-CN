@@ -56,13 +56,8 @@ L = dict(
     S_LINE2_Y=215, S_FOOT_BASE=229, S_BOX=11, S_BOX_X=289, S_ARROW_L=228, S_ARROW_R=300, S_GAIN_X=264,
 )
 
-<<<<<<< HEAD
 # (the strings below may keep one text more than the languages, Russian: left out of the screen - zip drops it)
 LANGS = ['en', 'fr', 'de', 'es', 'it', 'ja', 'chs']
-=======
-# (the strings below keep a seventh, Russian text: left out of the screen - zip drops it)
-LANGS = ['en', 'fr', 'de', 'es', 'it', 'ja', 'cn']
->>>>>>> ef6485543fd39ec3248a0e1e0d3f3b3361c9de47
 
 # the strings: (name, font, size, letter spacing, {lang: text}); one text for all when a str
 STRINGS = [
@@ -119,7 +114,7 @@ STRINGS = [
     # the circle pad's sensitivity (3ds/input_3ds.cpp re4_3ds_stick_set): its row and the gain between 1× and 1.5×
     ('S_STICK', SERIF_R, 11, 0, ['Circle Pad sensitivity', 'Sensibilité du pad circulaire', 'Schiebepad-Empfindlichkeit',
                                  'Sensibilidad del botón deslizante', 'Sensibilità del pad scorrevole', 'スライドパッド感度',
-                                 '左摇杆灵敏度']),
+                                 '滑杆灵敏度']),
     ('S_G12', SERIF, 11, 0, ['1.25×', '1,25×', '1,25×', '1,25×', '1,25×', '1.25×', '1.25×']),
     # the picture on the top screen (3ds/gx_3ds.cpp re4_3ds_gx_fill; a player's wish: no bars): the game's
     # 16:9 band fitted (as before), stretched to the screen's height, or zoomed to it (the sides cut)
@@ -138,7 +133,7 @@ STRINGS = [
     # the Circle Pad's dead zone (a worn pad's drift ignored): its row; the value a percent (the digits) or OFF
     ('S_DEADZONE', SERIF_R, 11, 0, ['Circle Pad dead zone', 'Zone morte du pad circulaire', 'Schiebepad-Totzone',
                                     'Zona muerta del botón deslizante', 'Zona morta del pad scorrevole',
-                                    'スライドパッドの遊び', '左摇杆死区']),
+                                    'スライドパッドの遊び', '滑杆死区']),
     ('S_BTN_TITLE', SERIF, 13, 3, ['BUTTONS', 'BOUTONS', 'TASTEN', 'BOTONES', 'PULSANTI', 'ボタン配置', '按键']),
     ('A_UP', SERIF_R, 11, 0, ['Forward / aim up', 'Avancer / viser en haut', 'Vorwärts / nach oben zielen',
                               'Avanzar / apuntar arriba', 'Avanti / mira in alto', '前進・上を狙う', '前进 / 向上瞄准']),
@@ -187,10 +182,10 @@ STRINGS = [
     ('K_RIGHT', SERIF, 11, 0, '→'), ('K_START', SERIF, 10, 1, 'START'), ('K_PLUS', SERIF_R, 11, 0, ' + '),
     ('K_NONE', SERIF_R, 11, 0, '—'),
     # the sticks' directions by the names the 3DS's manuals give them (a player tells the two apart)
-    ('K_PUP', SERIF, 10, 0, ['Circle Pad ↑', 'Pad circ. ↑', 'Schiebepad ↑', 'Desliz. ↑', 'Pad scorr. ↑', 'スライドパッド↑', '左摇杆↑']),
-    ('K_PDOWN', SERIF, 10, 0, ['Circle Pad ↓', 'Pad circ. ↓', 'Schiebepad ↓', 'Desliz. ↓', 'Pad scorr. ↓', 'スライドパッド↓', '左摇杆↓']),
-    ('K_PLEFT', SERIF, 10, 0, ['Circle Pad ←', 'Pad circ. ←', 'Schiebepad ←', 'Desliz. ←', 'Pad scorr. ←', 'スライドパッド←', '左摇杆←']),
-    ('K_PRIGHT', SERIF, 10, 0, ['Circle Pad →', 'Pad circ. →', 'Schiebepad →', 'Desliz. →', 'Pad scorr. →', 'スライドパッド→', '左摇杆→']),
+    ('K_PUP', SERIF, 10, 0, ['Circle Pad ↑', 'Pad circ. ↑', 'Schiebepad ↑', 'Desliz. ↑', 'Pad scorr. ↑', 'スライドパッド↑', '滑杆↑']),
+    ('K_PDOWN', SERIF, 10, 0, ['Circle Pad ↓', 'Pad circ. ↓', 'Schiebepad ↓', 'Desliz. ↓', 'Pad scorr. ↓', 'スライドパッド↓', '滑杆↓']),
+    ('K_PLEFT', SERIF, 10, 0, ['Circle Pad ←', 'Pad circ. ←', 'Schiebepad ←', 'Desliz. ←', 'Pad scorr. ←', 'スライドパッド←', '滑杆←']),
+    ('K_PRIGHT', SERIF, 10, 0, ['Circle Pad →', 'Pad circ. →', 'Schiebepad →', 'Desliz. →', 'Pad scorr. →', 'スライドパッド→', '滑杆→']),
     ('K_CUP', SERIF, 10, 0, ['C-Stick ↑', 'Stick C ↑', 'C-Stick ↑', 'Palanca C ↑', 'Stick C ↑', 'Cスティック↑', 'C摇杆↑']),
     ('K_CDOWN', SERIF, 10, 0, ['C-Stick ↓', 'Stick C ↓', 'C-Stick ↓', 'Palanca C ↓', 'Stick C ↓', 'Cスティック↓', 'C摇杆↓']),
     ('K_CLEFT', SERIF, 10, 0, ['C-Stick ←', 'Stick C ←', 'C-Stick ←', 'Palanca C ←', 'Stick C ←', 'Cスティック←', 'C摇杆←']),
@@ -280,19 +275,11 @@ def add_piece(text, fname, size, spacing):
 
 
 def lang_size(lang, size):
-<<<<<<< HEAD
     return max(size, 10) if lang in ('ja', 'chs') else size  # (kana and kanji below 10 px do not read)
-=======
-    return max(size, 10) if lang in ('ja', 'cn') else size  # (kana and kanji below 10 px do not read)
->>>>>>> ef6485543fd39ec3248a0e1e0d3f3b3361c9de47
 
 
 def lang_spacing(lang, spacing):
-<<<<<<< HEAD
     return min(spacing, 1) if lang in ('ja', 'chs') else spacing
-=======
-    return min(spacing, 1) if lang in ('ja', 'cn') else spacing
->>>>>>> ef6485543fd39ec3248a0e1e0d3f3b3361c9de47
 
 
 str_idx = {}  # name -> [piece per language]
